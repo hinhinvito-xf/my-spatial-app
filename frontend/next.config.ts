@@ -1,16 +1,12 @@
-/** @type {import('next').NextConfig} */
-const nextConfig = {
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
   reactStrictMode: true,
-  // Save memory by disabling type checking during production build
+  // We keep this to ignore TS errors during build to save memory/time
   typescript: {
     ignoreBuildErrors: true,
   },
-  // Save memory by disabling linting during production build
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
-  // Reduce memory usage by disabling source maps in production
-  productionBrowserSourceMaps: false,
+  // Note: We removed the 'eslint' block because it causes errors in next.config.ts
 };
 
-module.exports = nextConfig;
+export default nextConfig;
