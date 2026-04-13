@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Socket } from 'socket.io-client';
+import { RealtimeChannel } from '@supabase/supabase-js';
 
 const getDistance = (p1: {x:number, y:number}, p2: {x:number, y:number}) => {
   return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
 };
 
-export const useWebRTC = (socket: Socket | null, localStream: MediaStream | null) => {
+export const useWebRTC = (channel: RealtimeChannel | null, currentUserId: string | undefined, localStream: MediaStream | null) => {
   const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
   const peersRef = useRef<Record<string, RTCPeerConnection>>({});
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -22,10 +22,11 @@ export const useWebRTC = (socket: Socket | null, localStream: MediaStream | null
       if (audioEl) {
         const dist = getDistance(myPos, {x: user.x, y: user.y});
         
-        // STRICT CUTOFF: Only hear if <= 2 grids (using 2.2 for slight diagonal allowance)
-        if (dist <= 2.2) { 
-           // Ramp volume up? Or just full. User requested "only allow... if 2 grids"
-           if(audioEl.volume !== 1.0) audioEl.volume = 1.0;
+        // STRICT CUTOFF: Only hear if <= 6 tiles.
+        if (dist <= 6) { 
+           // Ramp volume based on distance
+           const vol = Math.max(0, 1 - (dist / 6));
+           if(Math.abs(audioEl.volume - vol) > 0.05) audioEl.volume = vol;
         } else {
            if(audioEl.volume !== 0.0) audioEl.volume = 0.0;
         }
@@ -34,7 +35,7 @@ export const useWebRTC = (socket: Socket | null, localStream: MediaStream | null
   }, []);
 
   useEffect(() => {
-    if (!socket) return;
+    if (!channel || !currentUserId) return;
 
     const createPeer = (targetId: string, isInitiator: boolean) => {
       const peer = new RTCPeerConnection({
@@ -50,7 +51,11 @@ export const useWebRTC = (socket: Socket | null, localStream: MediaStream | null
 
       peer.onicecandidate = (e) => {
         if (e.candidate) {
-          socket.emit('signal', { targetId, signal: { type: 'candidate', candidate: e.candidate } });
+          channel.send({
+            type: 'broadcast',
+            event: 'signal',
+            payload: { targetId, senderId: currentUserId, signal: { type: 'candidate', candidate: e.candidate } }
+          });
         }
       };
 
@@ -58,7 +63,6 @@ export const useWebRTC = (socket: Socket | null, localStream: MediaStream | null
         if (e.streams && e.streams[0]) {
           setRemoteStreams(prev => ({ ...prev, [targetId]: e.streams[0] }));
           
-          // Create Audio Element for Spatial Sound if not exists
           if (!audioElementsRef.current[targetId]) {
             const audio = new Audio();
             audio.srcObject = e.streams[0];
@@ -75,7 +79,11 @@ export const useWebRTC = (socket: Socket | null, localStream: MediaStream | null
           if (peer.signalingState !== 'stable') return;
           const offer = await peer.createOffer();
           await peer.setLocalDescription(offer);
-          socket.emit('signal', { targetId, signal: { type: 'offer', sdp: peer.localDescription } });
+          channel.send({
+            type: 'broadcast',
+            event: 'signal',
+            payload: { targetId, senderId: currentUserId, signal: { type: 'offer', sdp: peer.localDescription } }
+          });
         } catch (err) { console.error("Negotiation error", err); }
       };
 
@@ -83,13 +91,23 @@ export const useWebRTC = (socket: Socket | null, localStream: MediaStream | null
       return peer;
     };
 
-    const handleUserJoined = (newUser: any) => {
-      const peer = createPeer(newUser.id, true);
-      peer.createDataChannel("presence"); 
+    const handleUserJoined = (payload: any) => {
+      const newUser = payload.user;
+      if (newUser.id === currentUserId) return;
+      if (!peersRef.current[newUser.id]) {
+        // Initiator logic: Only initiate if our ID is lexically smaller to avoid duplicate offers
+        if (currentUserId < newUser.id) {
+          createPeer(newUser.id, true);
+        }
+      }
     };
 
-    const handleSignal = async ({ senderId, signal }: { senderId: string, signal: any }) => {
+    const handleSignalEvent = async (payload: any) => {
+      const { targetId, senderId, signal } = payload;
+      if (targetId !== currentUserId) return; // Ignore signals not meant for us
+
       let peer = peersRef.current[senderId];
+      // If we don't have a peer and we received an offer, create one
       if (!peer && signal.type === 'offer') peer = createPeer(senderId, false);
       if (!peer) return;
 
@@ -99,7 +117,12 @@ export const useWebRTC = (socket: Socket | null, localStream: MediaStream | null
           await peer.setRemoteDescription(new RTCSessionDescription(signal.sdp));
           const answer = await peer.createAnswer();
           await peer.setLocalDescription(answer);
-          socket.emit('signal', { targetId: senderId, signal: { type: 'answer', sdp: peer.localDescription } });
+          
+          channel.send({
+            type: 'broadcast',
+            event: 'signal',
+            payload: { targetId: senderId, senderId: currentUserId, signal: { type: 'answer', sdp: peer.localDescription } }
+          });
         } else if (signal.type === 'answer') {
           await peer.setRemoteDescription(new RTCSessionDescription(signal.sdp));
         } else if (signal.type === 'candidate') {
@@ -108,32 +131,33 @@ export const useWebRTC = (socket: Socket | null, localStream: MediaStream | null
       } catch (e) { console.error("Signal error", e); }
     };
 
-    const handleUserLeft = (userId: string) => {
-      if (peersRef.current[userId]) {
-        peersRef.current[userId].close();
-        delete peersRef.current[userId];
+    const handleUserLeft = (payload: any) => {
+      const { id: leftUserId } = payload;
+      if (peersRef.current[leftUserId]) {
+        peersRef.current[leftUserId].close();
+        delete peersRef.current[leftUserId];
       }
-      if (audioElementsRef.current[userId]) {
-        audioElementsRef.current[userId].pause();
-        delete audioElementsRef.current[userId];
+      if (audioElementsRef.current[leftUserId]) {
+        audioElementsRef.current[leftUserId].pause();
+        delete audioElementsRef.current[leftUserId];
       }
       setRemoteStreams(prev => {
         const next = { ...prev };
-        delete next[userId];
+        delete next[leftUserId];
         return next;
       });
     };
 
-    socket.on('user_joined', handleUserJoined);
-    socket.on('signal', handleSignal);
-    socket.on('user_left', handleUserLeft);
+    // Subscribing to Supabase Realtime Broadcast events
+    channel
+      .on('broadcast', { event: 'user_joined' }, (payload) => handleUserJoined(payload.payload))
+      .on('broadcast', { event: 'signal' }, (payload) => handleSignalEvent(payload.payload))
+      .on('broadcast', { event: 'user_left' }, (payload) => handleUserLeft(payload.payload));
 
     return () => {
-      socket.off('user_joined', handleUserJoined);
-      socket.off('signal', handleSignal);
-      socket.off('user_left', handleUserLeft);
+      // Cleanup happens when channel unsubscribes outside this hook
     };
-  }, [socket]); 
+  }, [channel, currentUserId]); 
 
   // Handle Stream Updates (Mic/Cam toggle)
   useEffect(() => {
