@@ -234,6 +234,12 @@ const GamePage = () => {
       .on('broadcast', { event: 'admin_update_object' }, ({ payload }) => setInteractiveObjects(prev => prev.map(o => o.id === payload.id ? payload : o)))
       .on('broadcast', { event: 'admin_delete_object' }, ({ payload }) => setInteractiveObjects(prev => payload.id === 'ALL' ? [] : prev.filter(o => o.id !== payload.id)))
       .on('broadcast', { event: 'emoji' }, ({ payload }) => setFloatingEmojis(prev => [...prev, { ...payload, timestamp: Date.now() }]))
+      .on('broadcast', { event: 'move' }, ({ payload }) => {
+        setOtherUsers(prev => {
+          if (!prev.some(u => u.id === payload.userId)) return prev;
+          return prev.map(u => u.id === payload.userId ? { ...u, x: payload.x, y: payload.y, direction: payload.direction } : u);
+        });
+      })
       .subscribe((status) => { if (status === 'SUBSCRIBED') setIsConnected(true); });
       
     activeChannelRef.current = newChannel;
@@ -242,24 +248,33 @@ const GamePage = () => {
 
   const trackRef = useRef(0);
   const trackTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const latestPayloadRef = useRef<any>(null);
   
+  // 1. PRESENCE METADATA: Track globally online/offline status, name, and camera feed exactly once or when metadata settings change.
+  // We purposely exclude x, y from dependencies so moving does NOT crash the network presence limits.
   useEffect(() => {
     if (!isConnected || !channel || !isGameStarted) return;
-    latestPayloadRef.current = { displayName: username, x, y, direction, avatarConfig: avatar, isCameraOn };
+    channel.track({ displayName: username, x, y, direction, avatarConfig: avatar, isCameraOn }).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected, channel, isGameStarted, avatar, username, isCameraOn]);
+  
+  // 2. MOVEMENT LOOP: Send high-speed ephemeral broadcast streams matching video game update cycles (12 FPS).
+  useEffect(() => {
+    if (!isConnected || !channel || !isGameStarted) return;
     const now = Date.now();
-    if (now - trackRef.current > 100) { 
-      channel.track(latestPayloadRef.current).catch(() => {});
+    const movePayload = { userId, x, y, direction };
+    
+    if (now - trackRef.current > 80) { 
+      channel.send({ type: 'broadcast', event: 'move', payload: movePayload }).catch(() => {});
       trackRef.current = now;
       if (trackTimeoutRef.current) { clearTimeout(trackTimeoutRef.current); trackTimeoutRef.current = null; }
     } else if (!trackTimeoutRef.current) {
       trackTimeoutRef.current = setTimeout(() => {
-        channel.track(latestPayloadRef.current).catch(() => {});
+        channel.send({ type: 'broadcast', event: 'move', payload: movePayload }).catch(() => {});
         trackRef.current = Date.now();
         trackTimeoutRef.current = null;
-      }, 100);
+      }, 80);
     }
-  }, [x, y, direction, isCameraOn, isConnected, avatar, username, channel, isGameStarted]);
+  }, [x, y, direction, isConnected, channel, isGameStarted, userId]);
 
 
   if (!isGameStarted) {
