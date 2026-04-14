@@ -54,9 +54,6 @@ export const useWebRTC = (
       ]
     });
 
-    if (isInitiator) {
-      peer.createDataChannel('init');
-    }
 
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(track => {
@@ -122,6 +119,12 @@ export const useWebRTC = (
         makingOfferRef.current[targetId] = false;
       }
     };
+
+    // IMPORTANT: createDataChannel MUST be called AFTER onnegotiationneeded
+    // handler is set, otherwise the event fires before anyone catches it!
+    if (isInitiator) {
+      peer.createDataChannel('init');
+    }
 
     peersRef.current[targetId] = peer;
     return peer;
