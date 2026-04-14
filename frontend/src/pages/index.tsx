@@ -130,10 +130,11 @@ const GamePage = () => {
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [isMicOn, setIsMicOn] = useState(false);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
-  const [localVideoEl, setLocalVideoEl] = useState<HTMLVideoElement | null>(null);
+  
+  const localVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteVideoRefs = useRef<Record<string, HTMLVideoElement>>({});
   
   const { remoteStreams, updateVolumes } = useWebRTC(channel, userId, localStream, otherUsers);
-  const [remoteVideoRefs, setRemoteVideoRefs] = useState<Record<string, HTMLVideoElement>>({});
 
   useEffect(() => {
     if (updateVolumes && otherUsers.length > 0) updateVolumes({x, y}, otherUsers.map(u => ({id: u.id, x: u.x, y: u.y})));
@@ -153,7 +154,10 @@ const GamePage = () => {
       stream.getVideoTracks().forEach(t => t.enabled = false);
       stream.getAudioTracks().forEach(t => t.enabled = false);
       setLocalStream(stream);
-      if (localVideoEl) { localVideoEl.srcObject = stream; localVideoEl.play().catch(e=>e); }
+      if (localVideoRef.current) { 
+        localVideoRef.current.srcObject = stream; 
+        localVideoRef.current.play().catch(e=>e); 
+      }
       return stream;
     } catch (e) {
       console.error("Media permission error", e);
@@ -319,13 +323,13 @@ const GamePage = () => {
 
   return (
     <div className="relative w-screen h-screen bg-[#020617] overflow-hidden font-sans">
-      <video ref={(el) => setLocalVideoEl(el)} autoPlay playsInline muted className="absolute top-0 left-0 w-1 h-1 opacity-0 pointer-events-none" />
+      <video ref={localVideoRef} autoPlay playsInline muted className="fixed -top-[9999px] -left-[9999px] w-[256px] h-[256px] opacity-100 pointer-events-none" />
       {Object.entries(remoteStreams).map(([uId, stream]) => (
         <video key={uId} ref={(el) => { 
           if (el && el.srcObject !== stream) { 
             el.srcObject = stream; 
             el.play().catch(e => console.log('Autoplay error', e)); 
-            setRemoteVideoRefs(p => ({ ...p, [uId]: el })); 
+            remoteVideoRefs.current[uId] = el;
           } 
         }} autoPlay playsInline muted className="fixed -top-[9999px] -left-[9999px] w-[256px] h-[256px] opacity-100 pointer-events-none" />
       ))}
@@ -334,8 +338,8 @@ const GamePage = () => {
         mapData={mapData} 
         currentUser={{id: userId, displayName: username, x, y, avatarConfig: avatar, direction, isCameraOn}} 
         otherUsers={otherUsers}
-        localVideo={localVideoEl} 
-        remoteVideos={remoteVideoRefs}
+        localVideoRef={localVideoRef} 
+        remoteVideoRefs={remoteVideoRefs}
         backgroundImage={backgroundImage}
         interactiveObjects={interactiveObjects} 
         onUpdateObject={handleUpdateObject}

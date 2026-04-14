@@ -30,10 +30,10 @@ interface MapCanvasProps {
   mapData: MapData | null; 
   currentUser: User; 
   otherUsers: User[];
-  onInteract?: (object: MapObject) => void;
-  localVideo?: HTMLVideoElement | null; 
-  remoteVideos?: Record<string, HTMLVideoElement>;
+  localVideoRef: React.RefObject<HTMLVideoElement>;
+  remoteVideoRefs: React.MutableRefObject<Record<string, HTMLVideoElement>>;
   backgroundImage?: string | null;
+  onInteract?: (userId: string) => void;
   interactiveObjects?: InteractiveObject[];
   onUpdateObject?: (obj: InteractiveObject) => void;
   onDeleteObject?: (id: string) => void; // NEW PROP
@@ -99,7 +99,7 @@ export const drawHumanSprite = (ctx: CanvasRenderingContext2D, config: AvatarCon
   ctx.restore();
 };
 
-export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, otherUsers, onInteract, localVideo, remoteVideos, backgroundImage, interactiveObjects = [], onUpdateObject, onDeleteObject, floatingEmojis = [], zoomLevel, onZoomChange }) => {
+export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, otherUsers, onInteract, localVideoRef, remoteVideoRefs, backgroundImage, interactiveObjects = [], onUpdateObject, onDeleteObject, floatingEmojis = [], zoomLevel, onZoomChange }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const objectsLayerRef = useRef<HTMLDivElement>(null);
@@ -227,10 +227,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, othe
       ctx.save(); ctx.translate(cx - 16, cy - 32); 
       let videoSource = null; 
       if (u.isCameraOn) { 
-        if (u.id === currentUser.id) videoSource = localVideo; 
-        else if (remoteVideos && remoteVideos[u.id]) {
-          const v = remoteVideos[u.id];
-          if (v.readyState >= 2) videoSource = v; 
+        if (u.id === currentUser.id && localVideoRef.current) {
+          videoSource = localVideoRef.current; 
+        } else if (remoteVideoRefs.current && remoteVideoRefs.current[u.id]) {
+          const v = remoteVideoRefs.current[u.id];
+          // readyState 0 = HAVE_NOTHING. By checking >= 1, we allow any buffered frames even if suspended!
+          if (v.readyState >= 1) videoSource = v; 
         }
       } 
       drawHumanSprite(ctx, u.avatarConfig, u.direction, true, 1.0, videoSource); 
