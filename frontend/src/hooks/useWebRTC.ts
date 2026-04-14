@@ -133,12 +133,16 @@ export const useWebRTC = (
       const users = otherUsersRef.current;
       const activeIds = new Set<string>();
 
+      console.log('[PROXIMITY]', { myId: currentUserId, myPos: pos, usersCount: users.length, existingPeers: Object.keys(peersRef.current).length });
+
       users.forEach(u => {
         const dist = (u.x !== undefined && u.y !== undefined)
           ? getDistance(pos, { x: u.x, y: u.y }) : 0;
+        console.log('[PROXIMITY] User:', u.id.slice(0,8), 'dist:', dist.toFixed(1), 'hasPeer:', !!peersRef.current[u.id], 'isSelf:', u.id === currentUserId);
         if (dist <= 12) {
           activeIds.add(u.id);
           if (!peersRef.current[u.id] && u.id !== currentUserId) {
+            console.log('[PROXIMITY] Creating peer to', u.id.slice(0,8));
             createPeer(u.id, currentUserId < u.id);
           }
         }
