@@ -254,7 +254,6 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, othe
     });
 
     ctx.restore();
-    requestAnimationFrame(render);
   };
   
   useEffect(() => { const handleResize = () => { if(containerRef.current && canvasRef.current) { const {width, height} = containerRef.current.getBoundingClientRect(); const d = window.devicePixelRatio||1; canvasRef.current.width = width * d; canvasRef.current.height = height * d; const c=canvasRef.current.getContext('2d'); if(c) { c.scale(d,d); c.imageSmoothingEnabled = false; } canvasRef.current.style.width = '100%'; canvasRef.current.style.height = '100%'; } }; window.addEventListener('resize', handleResize); handleResize(); setTimeout(handleResize, 100); return () => window.removeEventListener('resize', handleResize); }, []);

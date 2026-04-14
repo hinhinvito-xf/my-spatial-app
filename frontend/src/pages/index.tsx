@@ -132,11 +132,14 @@ const GamePage = () => {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
-  if (typeof document !== 'undefined' && !localVideoRef.current) {
+  useEffect(() => {
     const v = document.createElement('video');
     v.autoplay = true; v.playsInline = true; v.muted = true;
+    v.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0.01;pointer-events:none;z-index:-1;';
+    document.body.appendChild(v);
     localVideoRef.current = v;
-  }
+    return () => { v.remove(); };
+  }, []);
   
   const { remoteVideoRefs, updateVolumes } = useWebRTC(channel, isConnected ? userId : undefined, (isCameraOn || isMicOn) ? localStream : null, otherUsers, {x, y});
 

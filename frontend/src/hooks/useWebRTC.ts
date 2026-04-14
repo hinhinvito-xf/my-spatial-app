@@ -1,29 +1,61 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import { RealtimeChannel } from '@supabase/supabase-js';
 
 const getDistance = (p1: {x:number, y:number}, p2: {x:number, y:number}) => {
   return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
 };
 
-export const useWebRTC = (channel: RealtimeChannel | null, currentUserId: string | undefined, localStream: MediaStream | null, otherUsers: {id: string, x?: number, y?: number}[] = [], myPos: {x: number, y: number} = {x:0,y:0}) => {
+export const useWebRTC = (
+  channel: RealtimeChannel | null,
+  currentUserId: string | undefined,
+  localStream: MediaStream | null,
+  otherUsers: {id: string, x?: number, y?: number}[] = [],
+  myPos: {x: number, y: number} = {x:0, y:0}
+) => {
   const remoteVideoRefs = useRef<Record<string, HTMLVideoElement>>({});
   const peersRef = useRef<Record<string, RTCPeerConnection>>({});
   const localStreamRef = useRef<MediaStream | null>(null);
   const audioElementsRef = useRef<Record<string, HTMLAudioElement>>({});
   const makingOfferRef = useRef<Record<string, boolean>>({});
   const ignoreOfferRef = useRef<Record<string, boolean>>({});
+  const videoContainerRef = useRef<HTMLDivElement | null>(null);
+  const myPosRef = useRef(myPos);
+  const otherUsersRef = useRef(otherUsers);
 
-  // --- P2P WEBRTC LOGIC ---
+  // Keep refs in sync without triggering effects
+  useEffect(() => { myPosRef.current = myPos; }, [myPos.x, myPos.y]);
+  useEffect(() => { otherUsersRef.current = otherUsers; }, [otherUsers]);
+  useEffect(() => { localStreamRef.current = localStream; }, [localStream]);
+
+  // Create a hidden DOM container — Chrome REQUIRES video elements to be in
+  // the document tree to activate its hardware decoder. Off-DOM elements
+  // stay at readyState 0 forever and canvas drawImage gets blank frames.
+  useEffect(() => {
+    const container = document.createElement('div');
+    container.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;overflow:hidden;pointer-events:none;opacity:0.01;z-index:-1;';
+    document.body.appendChild(container);
+    videoContainerRef.current = container;
+    return () => { container.remove(); };
+  }, []);
+
+  // --- CREATE PEER ---
   const createPeer = useCallback((targetId: string, isInitiator: boolean) => {
     if (!channel || !currentUserId) return null;
 
+    if (peersRef.current[targetId]) {
+      peersRef.current[targetId].close();
+      delete peersRef.current[targetId];
+    }
+
     const peer = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+      ]
     });
-    
-    // Force aggressive connection tunneling instantly before any tracks exist
+
     if (isInitiator) {
-      peer.createDataChannel('spatial_signal');
+      peer.createDataChannel('init');
     }
 
     if (localStreamRef.current) {
@@ -35,25 +67,29 @@ export const useWebRTC = (channel: RealtimeChannel | null, currentUserId: string
     peer.onicecandidate = (e) => {
       if (e.candidate) {
         channel.send({
-          type: 'broadcast',
-          event: 'signal',
+          type: 'broadcast', event: 'signal',
           payload: { targetId, senderId: currentUserId, signal: { type: 'candidate', candidate: e.candidate } }
-        });
+        }).catch(() => {});
       }
     };
 
+    // Append video element to DOM container so Chrome decodes it
     peer.ontrack = (e) => {
       if (e.streams && e.streams[0]) {
-        // Pure Javascript Memory HTMLVideoElement creation (no DOM needed!)
         if (!remoteVideoRefs.current[targetId]) {
           const v = document.createElement('video');
           v.autoplay = true; v.playsInline = true; v.muted = true;
+          v.style.cssText = 'width:1px;height:1px;';
           v.srcObject = e.streams[0];
-          v.play().catch(e => console.log("Video block", e));
+          videoContainerRef.current?.appendChild(v);
+          v.play().catch(() => {});
           remoteVideoRefs.current[targetId] = v;
-        } else if (remoteVideoRefs.current[targetId].srcObject !== e.streams[0]) {
-          remoteVideoRefs.current[targetId].srcObject = e.streams[0];
-          remoteVideoRefs.current[targetId].play().catch(e=>e);
+        } else {
+          const v = remoteVideoRefs.current[targetId];
+          if (v.srcObject !== e.streams[0]) {
+            v.srcObject = e.streams[0];
+            v.play().catch(() => {});
+          }
         }
 
         if (!audioElementsRef.current[targetId]) {
@@ -62,7 +98,7 @@ export const useWebRTC = (channel: RealtimeChannel | null, currentUserId: string
           audio.autoplay = true;
           audio.volume = 0;
           audioElementsRef.current[targetId] = audio;
-          audio.play().catch(e => console.log("Audio autoplay blocked", e));
+          audio.play().catch(() => {});
         }
       }
     };
@@ -73,13 +109,14 @@ export const useWebRTC = (channel: RealtimeChannel | null, currentUserId: string
         await peer.setLocalDescription();
         if (peer.localDescription) {
           channel.send({
-            type: 'broadcast',
-            event: 'signal',
+            type: 'broadcast', event: 'signal',
             payload: { targetId, senderId: currentUserId, signal: { type: peer.localDescription.type, sdp: peer.localDescription.sdp } }
-          });
+          }).catch(() => {});
         }
-      } catch (err) { console.error("Negotiation error", err); } finally { 
-        makingOfferRef.current[targetId] = false; 
+      } catch (err) {
+        console.error("Negotiation error", err);
+      } finally {
+        makingOfferRef.current[targetId] = false;
       }
     };
 
@@ -87,77 +124,73 @@ export const useWebRTC = (channel: RealtimeChannel | null, currentUserId: string
     return peer;
   }, [channel, currentUserId]);
 
-  // Proximity Culling WebRTC Tunnels natively
+  // --- PROXIMITY CHECK (throttled to 1s interval, NOT on every position tick) ---
   useEffect(() => {
     if (!channel || !currentUserId) return;
-    
-    const activeIds = new Set<string>();
 
-    otherUsers.forEach(u => {
-      // Connect Tunnels ONLY if within 10 tiles!
-      const dist = (u.x !== undefined && u.y !== undefined) ? getDistance(myPos, {x: u.x, y: u.y}) : 0;
-      if (dist <= 10) {
-        activeIds.add(u.id);
-        if (!peersRef.current[u.id] && u.id !== currentUserId) {
-          createPeer(u.id, currentUserId < u.id);
+    const checkProximity = () => {
+      const pos = myPosRef.current;
+      const users = otherUsersRef.current;
+      const activeIds = new Set<string>();
+
+      users.forEach(u => {
+        const dist = (u.x !== undefined && u.y !== undefined)
+          ? getDistance(pos, { x: u.x, y: u.y }) : 0;
+        if (dist <= 12) {
+          activeIds.add(u.id);
+          if (!peersRef.current[u.id] && u.id !== currentUserId) {
+            createPeer(u.id, currentUserId < u.id);
+          }
         }
-      }
-    });
+      });
 
-    // CULL users out of bounds instantly
-    Object.keys(peersRef.current).forEach(existingId => {
-      if (!activeIds.has(existingId)) {
-        peersRef.current[existingId].close();
-        delete peersRef.current[existingId];
-
-        if (remoteVideoRefs.current[existingId]) {
-          remoteVideoRefs.current[existingId].pause();
-          remoteVideoRefs.current[existingId].srcObject = null;
-          remoteVideoRefs.current[existingId].remove();
-          delete remoteVideoRefs.current[existingId];
+      Object.keys(peersRef.current).forEach(id => {
+        if (!activeIds.has(id)) {
+          peersRef.current[id].close();
+          delete peersRef.current[id];
+          if (remoteVideoRefs.current[id]) {
+            remoteVideoRefs.current[id].pause();
+            remoteVideoRefs.current[id].srcObject = null;
+            remoteVideoRefs.current[id].remove();
+            delete remoteVideoRefs.current[id];
+          }
+          if (audioElementsRef.current[id]) {
+            audioElementsRef.current[id].pause();
+            audioElementsRef.current[id].srcObject = null;
+            delete audioElementsRef.current[id];
+          }
         }
+      });
+    };
 
-        if (audioElementsRef.current[existingId]) {
-          audioElementsRef.current[existingId].pause();
-          audioElementsRef.current[existingId].srcObject = null;
-          delete audioElementsRef.current[existingId];
-        }
-      }
-    });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [otherUsers, channel, currentUserId, myPos.x, myPos.y]);
+    checkProximity();
+    const interval = setInterval(checkProximity, 1000);
+    return () => clearInterval(interval);
+  }, [channel, currentUserId, createPeer]);
 
-  useEffect(() => {
-    localStreamRef.current = localStream;
-  }, [localStream]);
-
-  // --- SPATIAL AUDIO LOGIC ---
+  // --- SPATIAL AUDIO ---
   const updateVolumes = useCallback((myPos: {x:number, y:number}, otherUsers: {id: string, x: number, y: number}[]) => {
     otherUsers.forEach(user => {
       const audioEl = audioElementsRef.current[user.id];
       if (audioEl) {
         const dist = getDistance(myPos, {x: user.x, y: user.y});
-        
-        // STRICT CUTOFF: Only hear if <= 6 tiles.
-        if (dist <= 6) { 
-           // Ramp volume based on distance
-           const vol = Math.max(0, 1 - (dist / 6));
-           if(Math.abs(audioEl.volume - vol) > 0.05) audioEl.volume = vol;
+        if (dist <= 6) {
+          const vol = Math.max(0, 1 - (dist / 6));
+          if (Math.abs(audioEl.volume - vol) > 0.05) audioEl.volume = vol;
         } else {
-           if(audioEl.volume !== 0.0) audioEl.volume = 0.0;
+          if (audioEl.volume !== 0.0) audioEl.volume = 0.0;
         }
       }
     });
   }, []);
 
+  // --- SIGNALING ---
   useEffect(() => {
     if (!channel || !currentUserId) return;
 
-    // User join/leave logic is now handled organically by the Presence useEffect above.
-
     const handleSignalEvent = async (payload: any) => {
       const { targetId, senderId, signal } = payload;
-      if (targetId !== currentUserId) return; // Ignore signals not meant for us
+      if (targetId !== currentUserId) return;
 
       let peer = peersRef.current[senderId];
       if (!peer && signal.type === 'offer') {
@@ -169,43 +202,37 @@ export const useWebRTC = (channel: RealtimeChannel | null, currentUserId: string
 
       try {
         if (signal.type === 'offer' || signal.type === 'answer') {
-          const isPolite = currentUserId > senderId; // If we are alphabetically larger, we yield.
-          
+          const isPolite = currentUserId > senderId;
           if (signal.type === 'offer') {
             const offerCollision = makingOfferRef.current[senderId] || peer.signalingState !== 'stable';
             ignoreOfferRef.current[senderId] = !isPolite && offerCollision;
             if (ignoreOfferRef.current[senderId]) return;
           }
-
-          // Important: Don't set remote description if we're ignoring the offer! State handling natively manages rollbacks for polite peers.
           await peer.setRemoteDescription(new RTCSessionDescription(signal));
-          
           if (signal.type === 'offer') {
             await peer.setLocalDescription();
             if (peer.localDescription) {
-               channel.send({
-                 type: 'broadcast', event: 'signal',
-                 payload: { targetId: senderId, senderId: currentUserId, signal: { type: peer.localDescription.type, sdp: peer.localDescription.sdp } }
-               });
+              channel.send({
+                type: 'broadcast', event: 'signal',
+                payload: { targetId: senderId, senderId: currentUserId, signal: { type: peer.localDescription.type, sdp: peer.localDescription.sdp } }
+              }).catch(() => {});
             }
           }
         } else if (signal.type === 'candidate') {
-          try { await peer.addIceCandidate(new RTCIceCandidate(signal.candidate)); } catch (e) {
-             if (!ignoreOfferRef.current[senderId]) console.error("ICE error", e);
+          try {
+            await peer.addIceCandidate(new RTCIceCandidate(signal.candidate));
+          } catch (e) {
+            if (!ignoreOfferRef.current[senderId]) console.error("ICE error", e);
           }
         }
       } catch (e) { console.error("Signal error", e); }
     };
 
-    // Subscribing to Supabase Realtime Broadcast events
     channel.on('broadcast', { event: 'signal' }, (payload) => handleSignalEvent(payload.payload));
+    return () => {};
+  }, [channel, currentUserId, createPeer]);
 
-    return () => {
-      // Cleanup happens when channel unsubscribes outside this hook
-    };
-  }, [channel, currentUserId]); 
-
-  // Handle Stream Updates (Mic/Cam toggle)
+  // --- TRACK UPDATES (camera/mic toggle) ---
   useEffect(() => {
     const videoTrack = localStream?.getVideoTracks()[0];
     const audioTrack = localStream?.getAudioTracks()[0];
@@ -219,17 +246,17 @@ export const useWebRTC = (channel: RealtimeChannel | null, currentUserId: string
         if (videoSender) videoSender.replaceTrack(videoTrack).catch(console.error);
         else if (localStream) peer.addTrack(videoTrack, localStream);
       } else {
-        if (videoSender) videoSender.replaceTrack(null);
+        if (videoSender) videoSender.replaceTrack(null).catch(() => {});
       }
 
       if (audioTrack) {
         if (audioSender) audioSender.replaceTrack(audioTrack).catch(console.error);
         else if (localStream) peer.addTrack(audioTrack, localStream);
       } else {
-        if (audioSender) audioSender.replaceTrack(null);
+        if (audioSender) audioSender.replaceTrack(null).catch(() => {});
       }
     });
-  }, [localStream]); 
+  }, [localStream]);
 
   return { remoteVideoRefs, updateVolumes };
 };
