@@ -258,7 +258,19 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, othe
   };
   
   useEffect(() => { const handleResize = () => { if(containerRef.current && canvasRef.current) { const {width, height} = containerRef.current.getBoundingClientRect(); const d = window.devicePixelRatio||1; canvasRef.current.width = width * d; canvasRef.current.height = height * d; const c=canvasRef.current.getContext('2d'); if(c) { c.scale(d,d); c.imageSmoothingEnabled = false; } canvasRef.current.style.width = '100%'; canvasRef.current.style.height = '100%'; } }; window.addEventListener('resize', handleResize); handleResize(); setTimeout(handleResize, 100); return () => window.removeEventListener('resize', handleResize); }, []);
-  useEffect(() => { requestAnimationFrame(render); }, [mapData, currentUser, otherUsers, backgroundImage, interactiveObjects, selectedId, zoomLevel]); 
+  
+  const renderLoopRef = useRef<() => void>();
+  renderLoopRef.current = render;
+
+  useEffect(() => { 
+    let animationId: number;
+    const tick = () => {
+      if (renderLoopRef.current) renderLoopRef.current();
+      animationId = requestAnimationFrame(tick);
+    };
+    animationId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(animationId);
+  }, []); 
   useEffect(() => { const c = canvasRef.current; if(!c)return; const h = (e: WheelEvent) => { e.preventDefault(); onZoomChange(Math.min(Math.max(zoomLevel - e.deltaY*0.001, 0.5), 3.0)); }; c.addEventListener('wheel', h, {passive:false}); return () => c.removeEventListener('wheel', h); }, [zoomLevel, onZoomChange]);
 
   return (
