@@ -97,6 +97,7 @@ const GamePage = () => {
     }
     return uuidv4();
   });
+  const [username, setUsername] = useState("");
   const [isGameStarted, setIsGameStarted] = useState(false);
   const [language, setLanguage] = useState<Language>('en');
   const t = (key: any) => getTranslation(language, key);
