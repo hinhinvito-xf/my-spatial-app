@@ -18,6 +18,11 @@ export const useWebRTC = (channel: RealtimeChannel | null, currentUserId: string
     const peer = new RTCPeerConnection({
       iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
     });
+    
+    // Force aggressive connection tunneling instantly before any tracks exist
+    if (isInitiator) {
+      peer.createDataChannel('spatial_signal');
+    }
 
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(track => {
@@ -70,13 +75,11 @@ export const useWebRTC = (channel: RealtimeChannel | null, currentUserId: string
   useEffect(() => {
     if (!channel || !currentUserId) return;
     
-    // Check for NEW users to open offer
+    // Check for NEW users to open peer connection tunnels
     otherUsers.forEach(u => {
       if (!peersRef.current[u.id] && u.id !== currentUserId) {
-        // Initiator logic: lexical comparison prevents duplicate reverse offers
-        if (currentUserId < u.id) {
-          createPeer(u.id, true);
-        }
+        // Always create peer. Only one side initiates the forceful data tunnel.
+        createPeer(u.id, currentUserId < u.id);
       }
     });
 
@@ -138,7 +141,10 @@ export const useWebRTC = (channel: RealtimeChannel | null, currentUserId: string
 
       try {
         if (signal.type === 'offer') {
-          if (peer.signalingState !== 'stable' && peer.signalingState !== 'have-local-offer') return;
+          // If we receive an offer while we also sent one, use Polite/Impolite strategy to prevent Glare.
+          const isImpolite = currentUserId < senderId;
+          if (peer.signalingState !== 'stable' && isImpolite) return; // Glare collision, ignore their offer
+          
           await peer.setRemoteDescription(new RTCSessionDescription(signal.sdp));
           const answer = await peer.createAnswer();
           await peer.setLocalDescription(answer);

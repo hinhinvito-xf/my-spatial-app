@@ -321,7 +321,13 @@ const GamePage = () => {
     <div className="relative w-screen h-screen bg-[#020617] overflow-hidden font-sans">
       <video ref={(el) => setLocalVideoEl(el)} autoPlay playsInline muted className="absolute top-0 left-0 w-1 h-1 opacity-0 pointer-events-none" />
       {Object.entries(remoteStreams).map(([uId, stream]) => (
-        <video key={uId} ref={(el) => { if (el && el.srcObject !== stream) { el.srcObject = stream; el.play().catch(e => e); setRemoteVideoRefs(p => ({ ...p, [uId]: el })); } }} autoPlay playsInline muted className="absolute top-0 left-0 w-1 h-1 opacity-0 pointer-events-none" />
+        <video key={uId} ref={(el) => { 
+          if (el && el.srcObject !== stream) { 
+            el.srcObject = stream; 
+            el.play().catch(e => console.log('Autoplay error', e)); 
+            setRemoteVideoRefs(p => ({ ...p, [uId]: el })); 
+          } 
+        }} autoPlay playsInline muted className="fixed -top-[9999px] -left-[9999px] w-[256px] h-[256px] opacity-100 pointer-events-none" />
       ))}
 
       <MapCanvas 
