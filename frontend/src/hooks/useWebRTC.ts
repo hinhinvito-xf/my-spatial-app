@@ -120,10 +120,25 @@ export const useWebRTC = (
       }
     };
 
-    // IMPORTANT: createDataChannel MUST be called AFTER onnegotiationneeded
-    // handler is set, otherwise the event fires before anyone catches it!
     if (isInitiator) {
       peer.createDataChannel('init');
+      // Explicitly create and send offer - don't rely on onnegotiationneeded
+      // which doesn't fire reliably in all browsers for DataChannel-only peers
+      (async () => {
+        try {
+          console.log('[WEBRTC] Creating explicit offer for', targetId.slice(0,8));
+          const offer = await peer.createOffer();
+          await peer.setLocalDescription(offer);
+          console.log('[WEBRTC] Offer created, sending via broadcast');
+          await channel.send({
+            type: 'broadcast', event: 'signal',
+            payload: { targetId, senderId: currentUserId, signal: { type: 'offer', sdp: peer.localDescription!.sdp } }
+          });
+          console.log('[WEBRTC] Offer sent successfully');
+        } catch (err) {
+          console.error('[WEBRTC] Explicit offer error:', err);
+        }
+      })();
     }
 
     peersRef.current[targetId] = peer;
