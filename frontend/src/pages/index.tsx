@@ -87,8 +87,16 @@ const generateCityMap = (size:number):MapData => {
 const getRandomSpawn = (map:MapData) => ({ x: 20, y: 20 });
 
 const GamePage = () => {
-  const [userId] = useState(() => uuidv4());
-  const [username, setUsername] = useState("");
+  const [userId] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const stored = sessionStorage.getItem('spatial_user_id');
+      if (stored) return stored;
+      const newId = uuidv4();
+      sessionStorage.setItem('spatial_user_id', newId);
+      return newId;
+    }
+    return uuidv4();
+  });
   const [isGameStarted, setIsGameStarted] = useState(false);
   const [language, setLanguage] = useState<Language>('en');
   const t = (key: any) => getTranslation(language, key);
@@ -239,7 +247,7 @@ const GamePage = () => {
     if (!isConnected || !channel || !isGameStarted) return;
     latestPayloadRef.current = { displayName: username, x, y, direction, avatarConfig: avatar, isCameraOn };
     const now = Date.now();
-    if (now - trackRef.current > 150) { 
+    if (now - trackRef.current > 100) { 
       channel.track(latestPayloadRef.current).catch(() => {});
       trackRef.current = now;
       if (trackTimeoutRef.current) { clearTimeout(trackTimeoutRef.current); trackTimeoutRef.current = null; }
@@ -248,7 +256,7 @@ const GamePage = () => {
         channel.track(latestPayloadRef.current).catch(() => {});
         trackRef.current = Date.now();
         trackTimeoutRef.current = null;
-      }, 150);
+      }, 100);
     }
   }, [x, y, direction, isCameraOn, isConnected, avatar, username, channel, isGameStarted]);
 

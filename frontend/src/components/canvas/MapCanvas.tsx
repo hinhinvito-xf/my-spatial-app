@@ -213,9 +213,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, othe
           // If they jumped more than 5 tiles, snap instantly
           target.x = u.x; target.y = u.y;
         } else {
-          // IIR Filter for buttery smooth 60fps movement interpolation mid-network packet
-          target.x += (u.x - target.x) * 0.15;
-          target.y += (u.y - target.y) * 0.15;
+          // IIR Filter for snappy smooth movement. 0.35 gives tight responsive glide.
+          target.x += (u.x - target.x) * 0.35;
+          target.y += (u.y - target.y) * 0.35;
         }
         renderX = target.x;
         renderY = target.y;
