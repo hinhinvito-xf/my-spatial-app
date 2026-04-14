@@ -224,32 +224,35 @@ const GamePage = () => {
       } 
     });
     
+    const handlePresenceUpdate = () => {
+      const state = newChannel.presenceState();
+      const users: User[] = Object.keys(state).map(key => {
+        const presence = state[key][0] as any;
+        if (!presence) return null;
+        return {
+          id: key,
+          displayName: presence.displayName || 'Unknown',
+          x: presence.x,
+          y: presence.y,
+          direction: presence.direction,
+          avatarConfig: presence.avatarConfig,
+          isCameraOn: presence.isCameraOn
+        };
+      }).filter((u): u is User => u !== null && u.id !== userId);
+      setOtherUsers(users);
+    };
+
     newChannel
-      .on('presence', { event: 'sync' }, () => {
-        const state = newChannel.presenceState();
-        const users: User[] = Object.keys(state).map(key => {
-          const presence = state[key][0] as any;
-          if (!presence) return null;
-          return {
-            id: key,
-            displayName: presence.displayName || 'Unknown',
-            x: presence.x,
-            y: presence.y,
-            direction: presence.direction,
-            avatarConfig: presence.avatarConfig,
-            isCameraOn: presence.isCameraOn
-          };
-        }).filter((u): u is User => u !== null && u.id !== userId);
-        setOtherUsers(users);
-      })
+      .on('presence', { event: 'sync' }, handlePresenceUpdate)
+      .on('presence', { event: 'join' }, handlePresenceUpdate)
+      .on('presence', { event: 'leave' }, handlePresenceUpdate)
       .on('broadcast', { event: 'admin_add_object' }, ({ payload }) => setInteractiveObjects(prev => [...prev, payload]))
       .on('broadcast', { event: 'admin_update_object' }, ({ payload }) => setInteractiveObjects(prev => prev.map(o => o.id === payload.id ? payload : o)))
       .on('broadcast', { event: 'admin_delete_object' }, ({ payload }) => setInteractiveObjects(prev => payload.id === 'ALL' ? [] : prev.filter(o => o.id !== payload.id)))
-      .on('broadcast', { event: 'emoji' }, ({ payload }) => setFloatingEmojis(prev => [...prev, payload]))
+      .on('broadcast', { event: 'emoji' }, ({ payload }) => setFloatingEmojis(prev => [...prev, { ...payload, timestamp: Date.now() }]))
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           setIsConnected(true);
-          newChannel.track({ displayName: username, x, y, direction, avatarConfig: avatar, isCameraOn });
         }
       });
       
