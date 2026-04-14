@@ -10,6 +10,8 @@ export const useWebRTC = (channel: RealtimeChannel | null, currentUserId: string
   const peersRef = useRef<Record<string, RTCPeerConnection>>({});
   const localStreamRef = useRef<MediaStream | null>(null);
   const audioElementsRef = useRef<Record<string, HTMLAudioElement>>({});
+  const makingOfferRef = useRef<Record<string, boolean>>({});
+  const ignoreOfferRef = useRef<Record<string, boolean>>({});
 
   // --- P2P WEBRTC LOGIC ---
   const createPeer = useCallback((targetId: string, isInitiator: boolean) => {
@@ -56,15 +58,18 @@ export const useWebRTC = (channel: RealtimeChannel | null, currentUserId: string
 
     peer.onnegotiationneeded = async () => {
       try {
-        if (peer.signalingState !== 'stable') return;
-        const offer = await peer.createOffer();
-        await peer.setLocalDescription(offer);
-        channel.send({
-          type: 'broadcast',
-          event: 'signal',
-          payload: { targetId, senderId: currentUserId, signal: { type: 'offer', sdp: peer.localDescription } }
-        });
-      } catch (err) { console.error("Negotiation error", err); }
+        makingOfferRef.current[targetId] = true;
+        await peer.setLocalDescription();
+        if (peer.localDescription) {
+          channel.send({
+            type: 'broadcast',
+            event: 'signal',
+            payload: { targetId, senderId: currentUserId, signal: { type: peer.localDescription.type, sdp: peer.localDescription.sdp } }
+          });
+        }
+      } catch (err) { console.error("Negotiation error", err); } finally { 
+        makingOfferRef.current[targetId] = false; 
+      }
     };
 
     peersRef.current[targetId] = peer;
@@ -140,24 +145,31 @@ export const useWebRTC = (channel: RealtimeChannel | null, currentUserId: string
       if (!peer) return;
 
       try {
-        if (signal.type === 'offer') {
-          // If we receive an offer while we also sent one, use Polite/Impolite strategy to prevent Glare.
-          const isImpolite = currentUserId < senderId;
-          if (peer.signalingState !== 'stable' && isImpolite) return; // Glare collision, ignore their offer
+        if (signal.type === 'offer' || signal.type === 'answer') {
+          const isPolite = currentUserId > senderId; // If we are alphabetically larger, we yield.
           
-          await peer.setRemoteDescription(new RTCSessionDescription(signal.sdp));
-          const answer = await peer.createAnswer();
-          await peer.setLocalDescription(answer);
+          if (signal.type === 'offer') {
+            const offerCollision = makingOfferRef.current[senderId] || peer.signalingState !== 'stable';
+            ignoreOfferRef.current[senderId] = !isPolite && offerCollision;
+            if (ignoreOfferRef.current[senderId]) return;
+          }
+
+          // Important: Don't set remote description if we're ignoring the offer! State handling natively manages rollbacks for polite peers.
+          await peer.setRemoteDescription(new RTCSessionDescription(signal));
           
-          channel.send({
-            type: 'broadcast',
-            event: 'signal',
-            payload: { targetId: senderId, senderId: currentUserId, signal: { type: 'answer', sdp: peer.localDescription } }
-          });
-        } else if (signal.type === 'answer') {
-          await peer.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+          if (signal.type === 'offer') {
+            await peer.setLocalDescription();
+            if (peer.localDescription) {
+               channel.send({
+                 type: 'broadcast', event: 'signal',
+                 payload: { targetId: senderId, senderId: currentUserId, signal: { type: peer.localDescription.type, sdp: peer.localDescription.sdp } }
+               });
+            }
+          }
         } else if (signal.type === 'candidate') {
-          await peer.addIceCandidate(new RTCIceCandidate(signal.candidate));
+          try { await peer.addIceCandidate(new RTCIceCandidate(signal.candidate)); } catch (e) {
+             if (!ignoreOfferRef.current[senderId]) console.error("ICE error", e);
+          }
         }
       } catch (e) { console.error("Signal error", e); }
     };
