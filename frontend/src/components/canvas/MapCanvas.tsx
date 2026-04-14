@@ -231,15 +231,19 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, othe
       ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.beginPath(); ctx.ellipse(cx, cy - 4, TILE_SIZE/3, TILE_SIZE/6, 0, 0, Math.PI*2); ctx.fill(); 
       ctx.save(); ctx.translate(cx - 16, cy - 32); 
       let videoSource: HTMLVideoElement | HTMLImageElement | null = null; 
-      if (u.isCameraOn) { 
-        if (u.id === currentUser.id && localVideoRef.current) {
-          videoSource = localVideoRef.current; 
-        } else if (remoteCamFrames.current[u.id]) {
-          videoSource = remoteCamFrames.current[u.id];
-        } else if (remoteVideoRefs.current && remoteVideoRefs.current[u.id]) {
-          videoSource = remoteVideoRefs.current[u.id];
-        }
-      } 
+      // For local user: use local video when camera is on
+      if (u.id === currentUser.id && u.isCameraOn && localVideoRef.current) {
+        videoSource = localVideoRef.current; 
+      }
+      // For remote users: broadcast frame is the PRIMARY source (instant)
+      // Don't gate on isCameraOn since presence takes seconds to propagate
+      else if (u.id !== currentUser.id && remoteCamFrames.current[u.id]) {
+        videoSource = remoteCamFrames.current[u.id];
+      }
+      // Fallback: WebRTC video (if it ever connects)
+      else if (u.isCameraOn && remoteVideoRefs.current && remoteVideoRefs.current[u.id]) {
+        videoSource = remoteVideoRefs.current[u.id];
+      }
       drawHumanSprite(ctx, u.avatarConfig, u.direction, true, 1.0, videoSource); 
       ctx.restore(); 
       ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'center'; 

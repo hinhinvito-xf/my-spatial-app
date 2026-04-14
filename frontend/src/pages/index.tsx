@@ -171,7 +171,15 @@ const GamePage = () => {
       }
     }, 200); // 5 FPS
     
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      // Tell others to clear our face frame
+      channel.send({
+        type: 'broadcast',
+        event: 'cam_off',
+        payload: { userId }
+      }).catch(() => {});
+    };
   }, [isCameraOn, channel, userId]);
 
   const [showAddMenu, setShowAddMenu] = useState(false);
@@ -282,11 +290,14 @@ const GamePage = () => {
       .on('broadcast', { event: 'admin_delete_object' }, ({ payload }) => setInteractiveObjects(prev => payload.id === 'ALL' ? [] : prev.filter(o => o.id !== payload.id)))
       .on('broadcast', { event: 'emoji' }, ({ payload }) => setFloatingEmojis(prev => [...prev, { ...payload, timestamp: Date.now() }]))
       .on('broadcast', { event: 'cam_frame' }, ({ payload }) => {
-        if (payload.userId === userId) return; // skip own frames
+        if (payload.userId === userId) return;
         if (!remoteCamFramesRef.current[payload.userId]) {
           remoteCamFramesRef.current[payload.userId] = new Image();
         }
         remoteCamFramesRef.current[payload.userId].src = payload.frame;
+      })
+      .on('broadcast', { event: 'cam_off' }, ({ payload }) => {
+        delete remoteCamFramesRef.current[payload.userId];
       })
       .on('broadcast', { event: 'move' }, ({ payload }) => {
         setOtherUsers(prev => {
