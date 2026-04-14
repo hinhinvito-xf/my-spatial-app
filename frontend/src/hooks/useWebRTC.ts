@@ -182,14 +182,14 @@ export const useWebRTC = (channel: RealtimeChannel | null, currentUserId: string
 
       if (videoTrack) {
         if (videoSender) videoSender.replaceTrack(videoTrack).catch(console.error);
-        else if (localStream && peer.signalingState === 'stable') peer.addTrack(videoTrack, localStream);
+        else if (localStream) peer.addTrack(videoTrack, localStream);
       } else {
         if (videoSender) videoSender.replaceTrack(null);
       }
 
       if (audioTrack) {
         if (audioSender) audioSender.replaceTrack(audioTrack).catch(console.error);
-        else if (localStream && peer.signalingState === 'stable') peer.addTrack(audioTrack, localStream);
+        else if (localStream) peer.addTrack(audioTrack, localStream);
       } else {
         if (audioSender) audioSender.replaceTrack(null);
       }

@@ -222,12 +222,21 @@ const GamePage = () => {
     
     const handlePresenceUpdate = () => {
       const state = newChannel.presenceState();
-      const users = Object.keys(state).map(key => {
-        const presence = state[key][0] as any;
-        if (!presence) return null;
-        return { id: key, displayName: presence.displayName || 'Unknown', x: presence.x, y: presence.y, direction: presence.direction, avatarConfig: presence.avatarConfig, isCameraOn: presence.isCameraOn } as User;
-      }).filter((u): u is User => u !== null && u.id !== userId);
-      setOtherUsers(users);
+      
+      setOtherUsers(prev => {
+        const activeUsers = Object.keys(state).map(key => {
+          const presence = state[key][0] as any;
+          if (!presence) return null;
+          
+          const existing = prev.find(u => u.id === key);
+          const x = existing ? existing.x : presence.x;
+          const y = existing ? existing.y : presence.y;
+          const direction = existing ? existing.direction : presence.direction;
+
+          return { id: key, displayName: presence.displayName || 'Unknown', x, y, direction, avatarConfig: presence.avatarConfig, isCameraOn: presence.isCameraOn } as User;
+        }).filter((u): u is User => u !== null && u.id !== userId);
+        return activeUsers;
+      });
     };
 
     newChannel
@@ -323,7 +332,7 @@ const GamePage = () => {
 
   return (
     <div className="relative w-screen h-screen bg-[#020617] overflow-hidden font-sans">
-      <video ref={localVideoRef} autoPlay playsInline muted className="fixed -top-[9999px] -left-[9999px] w-[256px] h-[256px] opacity-100 pointer-events-none" />
+      <video ref={localVideoRef} autoPlay playsInline muted className="absolute top-0 left-0 w-[64px] h-[64px] opacity-[0.01] pointer-events-none -z-50 object-cover" />
       {Object.entries(remoteStreams).map(([uId, stream]) => (
         <video key={uId} ref={(el) => { 
           if (el && el.srcObject !== stream) { 
@@ -331,7 +340,7 @@ const GamePage = () => {
             el.play().catch(e => console.log('Autoplay error', e)); 
             remoteVideoRefs.current[uId] = el;
           } 
-        }} autoPlay playsInline muted className="fixed -top-[9999px] -left-[9999px] w-[256px] h-[256px] opacity-100 pointer-events-none" />
+        }} autoPlay playsInline muted className="absolute top-0 left-0 w-[64px] h-[64px] opacity-[0.01] pointer-events-none -z-50 object-cover" />
       ))}
 
       <MapCanvas 
