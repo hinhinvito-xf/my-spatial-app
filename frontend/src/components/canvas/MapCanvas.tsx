@@ -66,7 +66,7 @@ export const drawHumanSprite = (ctx: CanvasRenderingContext2D, config: AvatarCon
   else { rect(c.shirt, 14, bodyY + 2, 4, 8); }
   const headY = 2 + bob;
   rect(c.skin, 9, headY, 14, 12); 
-  if (videoElement && dir === 'down') {
+  if (videoElement && videoElement.readyState >= 2 && dir === 'down') {
     ctx.save(); ctx.beginPath(); ctx.rect(9, headY, 14, 12); ctx.clip(); try { ctx.drawImage(videoElement, 9, headY, 14, 12); } catch (e) {} ctx.restore(); ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 1; ctx.strokeRect(9.5, headY+0.5, 13, 11);
   } else {
     if (dir === 'down' || dir === 'right' || dir === 'left') {
@@ -230,9 +230,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, othe
         if (u.id === currentUser.id && localVideoRef.current) {
           videoSource = localVideoRef.current; 
         } else if (remoteVideoRefs.current && remoteVideoRefs.current[u.id]) {
-          const v = remoteVideoRefs.current[u.id];
-          // readyState 0 = HAVE_NOTHING. By checking >= 1, we allow any buffered frames even if suspended!
-          if (v.readyState >= 1) videoSource = v; 
+          videoSource = remoteVideoRefs.current[u.id];
         }
       } 
       drawHumanSprite(ctx, u.avatarConfig, u.direction, true, 1.0, videoSource); 
