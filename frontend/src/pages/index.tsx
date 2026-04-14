@@ -1,6 +1,7 @@
 import React, { useMemo, useEffect, useState, useRef, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { supabase } from '../lib/supabaseClient';
+import { getTranslation, Language } from '../lib/i18n';
 import MapCanvas, { MapData, User, AvatarConfig, drawHumanSprite, Direction, InteractiveObject } from '../components/canvas/MapCanvas';
 import { useAvatarMovement } from '../hooks/useAvatarMovement';
 import { useWebRTC } from '../hooks/useWebRTC'; 
@@ -71,7 +72,6 @@ const AvatarPreview: React.FC<{config:AvatarConfig}> = ({config}) => {
 };
 
 const MAP_SIZE = 200;
-const CHUNK_SIZE = 40; // Users in the same 40x40 chunk share a channel.
 const generateCityMap = (size:number):MapData => {
   const tiles:number[][] = [];
   for(let y=0; y<size; y++) {
@@ -90,8 +90,8 @@ const GamePage = () => {
   const [userId] = useState(() => uuidv4());
   const [username, setUsername] = useState("");
   const [isGameStarted, setIsGameStarted] = useState(false);
-  const language: Language = 'en';
-  const t = TRANSLATIONS[language];
+  const [language, setLanguage] = useState<Language>('en');
+  const t = (key: any) => getTranslation(language, key);
   const [avatar, setAvatar] = useState<AvatarConfig>({ skin: '#fca5a5', hair: 'short', hat: 'none', face: 'smile', shirt: '#3b82f6', pants: '#000', shoes: '#000' });
 
   const mapData = useMemo(() => generateCityMap(MAP_SIZE), []);
@@ -113,11 +113,11 @@ const GamePage = () => {
     setShowEmojiPicker(false);
   };
   
-  // Realtime Supabase
   const [channel, setChannel] = useState<RealtimeChannel | null>(null);
   const activeChannelRef = useRef<RealtimeChannel | null>(null);
   
-  // Audio / Video 
+  const [zoomLevel, setZoomLevel] = useState(1.0);
+  
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [isMicOn, setIsMicOn] = useState(false);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
@@ -130,12 +130,12 @@ const GamePage = () => {
     if (updateVolumes && otherUsers.length > 0) updateVolumes({x, y}, otherUsers.map(u => ({id: u.id, x: u.x, y: u.y})));
   }, [x, y, otherUsers, updateVolumes, remoteStreams]);
 
-  // Admin UI States
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [activeModal, setActiveModal] = useState<'video'|'iframe'|'image'|null>(null);
   const [modalInput, setModalInput] = useState("");
   const objectFileInputRef = useRef<HTMLInputElement>(null); 
   const fileInputRef = useRef<HTMLInputElement>(null); 
+  const isAdmin = username === 'AdminXiangFei123';
 
   const getStream = async () => {
     if (localStream) return localStream;
@@ -172,7 +172,6 @@ const GamePage = () => {
     }
   };
 
-  // Uploading Interactive Media via Supabase Storage
   const handleObjectUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -181,7 +180,6 @@ const GamePage = () => {
     
     let url = URL.createObjectURL(file);
     if (!error && data) url = supabase.storage.from('spatial_media').getPublicUrl(`objects/${fileName}`).data.publicUrl;
-    else console.warn("Supabase Storage fail. Requires auth or created bucket 'spatial_media'. Fallback to local.");
     let type: 'image' | 'video' | 'iframe' = 'iframe';
     if (file.type.startsWith('image/')) type = 'image';
     else if (file.type.startsWith('video/')) type = 'video';
@@ -200,42 +198,21 @@ const GamePage = () => {
   const handleDeleteObject = (id: string) => { setInteractiveObjects(prev => prev.filter(o => o.id !== id));    if (channel) activeChannelRef.current?.send({ type: 'broadcast', event: 'admin_delete_object', payload: { id } }); };
   const handleUpdateObject = (updatedObj: InteractiveObject) => { setInteractiveObjects(prev => prev.map(o => o.id === updatedObj.id ? updatedObj : o));    if (channel) activeChannelRef.current?.send({ type: 'broadcast', event: 'admin_update_object', payload: updatedObj }); };
 
-  // Setup Supabase Connection
   useEffect(() => {
     if (!isGameStarted) return;
-    const roomName = `spatial_world_global`; // Single instance room eliminates chunk-boundary crossover ghosting
-    
+    const roomName = `spatial_world_global`;
     const currentChannel = activeChannelRef.current;
-    
-    // Check if we are already in the right channel
     if (currentChannel && currentChannel.topic === `realtime:${roomName}`) return;
-    
-    // Leave previous channel
-    if (currentChannel) {
-      supabase.removeChannel(currentChannel);
-    }
+    if (currentChannel) { supabase.removeChannel(currentChannel); }
 
-    const newChannel = supabase.channel(roomName, { 
-      config: { 
-        presence: { key: userId },
-        broadcast: { ack: true }
-      } 
-    });
+    const newChannel = supabase.channel(roomName, { config: { presence: { key: userId }, broadcast: { ack: true } } });
     
     const handlePresenceUpdate = () => {
       const state = newChannel.presenceState();
-      const users: User[] = Object.keys(state).map(key => {
+      const users = Object.keys(state).map(key => {
         const presence = state[key][0] as any;
         if (!presence) return null;
-        return {
-          id: key,
-          displayName: presence.displayName || 'Unknown',
-          x: presence.x,
-          y: presence.y,
-          direction: presence.direction,
-          avatarConfig: presence.avatarConfig,
-          isCameraOn: presence.isCameraOn
-        };
+        return { id: key, displayName: presence.displayName || 'Unknown', x: presence.x, y: presence.y, direction: presence.direction, avatarConfig: presence.avatarConfig, isCameraOn: presence.isCameraOn } as User;
       }).filter((u): u is User => u !== null && u.id !== userId);
       setOtherUsers(users);
     };
@@ -248,43 +225,27 @@ const GamePage = () => {
       .on('broadcast', { event: 'admin_update_object' }, ({ payload }) => setInteractiveObjects(prev => prev.map(o => o.id === payload.id ? payload : o)))
       .on('broadcast', { event: 'admin_delete_object' }, ({ payload }) => setInteractiveObjects(prev => payload.id === 'ALL' ? [] : prev.filter(o => o.id !== payload.id)))
       .on('broadcast', { event: 'emoji' }, ({ payload }) => setFloatingEmojis(prev => [...prev, { ...payload, timestamp: Date.now() }]))
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          setIsConnected(true);
-        }
-      });
+      .subscribe((status) => { if (status === 'SUBSCRIBED') setIsConnected(true); });
       
     activeChannelRef.current = newChannel;
     setChannel(newChannel);
+  }, [isGameStarted, userId]);
 
-    return () => {
-      // Don't remove unconditionally so we can survive React strict mode or minor unmounts natively
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isGameStarted]);
-
-  // Track position updates without rejoining channel, properly throttled
   const trackRef = useRef(0);
   const trackTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const latestPayloadRef = useRef<any>(null);
   
   useEffect(() => {
     if (!isConnected || !channel || !isGameStarted) return;
-    
-    const payload = { displayName: username, x, y, direction, avatarConfig: avatar, isCameraOn };
+    latestPayloadRef.current = { displayName: username, x, y, direction, avatarConfig: avatar, isCameraOn };
     const now = Date.now();
-    
     if (now - trackRef.current > 150) { 
-      // Safe to send immediately
-      channel.track(payload).catch(() => {});
+      channel.track(latestPayloadRef.current).catch(() => {});
       trackRef.current = now;
-      if (trackTimeoutRef.current) {
-        clearTimeout(trackTimeoutRef.current);
-        trackTimeoutRef.current = null;
-      }
+      if (trackTimeoutRef.current) { clearTimeout(trackTimeoutRef.current); trackTimeoutRef.current = null; }
     } else if (!trackTimeoutRef.current) {
-      // Schedule the next update safely without delaying infinitely 
       trackTimeoutRef.current = setTimeout(() => {
-        channel.track(payload).catch(() => {});
+        channel.track(latestPayloadRef.current).catch(() => {});
         trackRef.current = Date.now();
         trackTimeoutRef.current = null;
       }, 150);
@@ -295,23 +256,25 @@ const GamePage = () => {
   if (!isGameStarted) {
     return ( 
       <div className="flex min-h-screen bg-[#070b14] text-white font-sans items-center justify-center p-4 selection:bg-blue-500/30"> 
-        <div className="absolute inset-0 overflow-hidden pointer-events-none">
-           <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl mix-blend-screen"></div>
-           <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl mix-blend-screen"></div>
+        <div className="absolute top-4 right-4 z-50 flex gap-2 bg-[#0f172a]/90 backdrop-blur border border-white/10 rounded-full px-4 py-2">
+          <select value={language} onChange={e => setLanguage(e.target.value as Language)} className="bg-transparent text-white outline-none cursor-pointer text-sm font-semibold">
+            <option value="en" className="text-black">English</option>
+            <option value="ja" className="text-black">日本語</option>
+            <option value="zh" className="text-black">中文</option>
+          </select>
         </div>
         <div className="flex flex-col md:flex-row gap-8 bg-white/5 backdrop-blur-xl p-8 rounded-3xl shadow-2xl border border-white/10 max-h-[90vh] z-10 w-full max-w-4xl relative overflow-hidden"> 
           <div className="w-full md:w-1/3 flex flex-col items-center justify-start bg-black/40 rounded-2xl p-6 border border-white/5"> 
-            <h2 className="text-xl font-bold mb-6 text-white/80 tracking-widest uppercase text-sm">{t.preview}</h2> 
+            <h2 className="text-xl font-bold mb-6 text-white/80 tracking-widest uppercase text-sm">{t('preview')}</h2> 
             <AvatarPreview config={avatar} /> 
           </div> 
-          
           <div className="w-full md:w-2/3 flex flex-col min-h-0"> 
-            <h1 className="text-3xl font-bold mb-2 bg-gradient-to-br from-white to-white/50 bg-clip-text text-transparent">{t.title}</h1> 
-            <p className="text-white/40 text-sm mb-8">{t.subtitle}</p> 
+            <h1 className="text-3xl font-bold mb-2 bg-gradient-to-br from-white to-white/50 bg-clip-text text-transparent">{t('title')}</h1> 
+            <p className="text-white/40 text-sm mb-8">{t('subtitle')}</p> 
             <div className="flex-1 overflow-y-auto pr-4 custom-scrollbar space-y-6"> 
               {(Object.keys(AVATAR_OPTIONS) as Array<keyof typeof AVATAR_OPTIONS>).map((key) => ( 
                 <div key={key}> 
-                  <label className="block text-[10px] uppercase font-bold text-white/50 mb-3 tracking-widest"> {(t.labels as any)[key]} </label> 
+                  <label className="block text-[10px] uppercase font-bold text-white/50 mb-3 tracking-widest"> {t(key)} </label> 
                   <div className="flex flex-wrap gap-2"> 
                     {AVATAR_OPTIONS[key].map((opt: string) => ( 
                       <button key={opt} onClick={() => setAvatar(prev => ({...prev, [key]: opt}))} className={`w-9 h-9 rounded-xl border transition-all duration-200 ${(avatar as any)[key] === opt ? 'border-blue-400 scale-110 shadow-[0_0_15px_rgba(96,165,250,0.4)]' : 'border-white/10 hover:border-white/30 hover:scale-105'}`} style={{backgroundColor: opt.startsWith('#') ? opt : '#111827'}} title={opt}> {!opt.startsWith('#') && <span className="text-[10px] flex items-center justify-center h-full w-full text-white/40">{opt.slice(0,2).toUpperCase()}</span>} </button> 
@@ -320,10 +283,9 @@ const GamePage = () => {
                 </div> 
               ))} 
             </div> 
-            
             <div className="mt-8 pt-6 border-t border-white/10"> 
-              <input type="text" className="w-full p-4 rounded-xl bg-black/50 border border-white/10 focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 outline-none text-white placeholder-white/30 mb-4 transition-all text-sm" placeholder={t.placeholder} value={username} onChange={e=>setUsername(e.target.value)} /> 
-              <button disabled={!username} onClick={()=>setIsGameStarted(true)} className="w-full bg-blue-600 py-4 rounded-xl font-bold text-white shadow-[0_0_20px_rgba(37,99,235,0.3)] hover:bg-blue-500 hover:shadow-[0_0_25px_rgba(37,99,235,0.5)] active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm uppercase tracking-wider"> {t.join} </button> 
+              <input type="text" className="w-full p-4 rounded-xl bg-black/50 border border-white/10 focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 outline-none text-white placeholder-white/30 mb-4 transition-all text-sm" placeholder={t('placeholder')} value={username} onChange={e=>setUsername(e.target.value)} /> 
+              <button disabled={!username} onClick={()=>setIsGameStarted(true)} className="w-full bg-blue-600 py-4 rounded-xl font-bold text-white shadow-[0_0_20px_rgba(37,99,235,0.3)] hover:bg-blue-500 hover:shadow-[0_0_25px_rgba(37,99,235,0.5)] active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm uppercase tracking-wider"> {t('join')} </button> 
             </div> 
           </div> 
         </div> 
@@ -335,16 +297,7 @@ const GamePage = () => {
     <div className="relative w-screen h-screen bg-[#020617] overflow-hidden font-sans">
       <video ref={(el) => setLocalVideoEl(el)} autoPlay playsInline muted className="absolute top-0 left-0 w-1 h-1 opacity-0 pointer-events-none" />
       {Object.entries(remoteStreams).map(([uId, stream]) => (
-        <video 
-          key={uId} 
-          ref={(el) => { 
-            if (el && el.srcObject !== stream) { el.srcObject = stream; el.play().catch(e => e); setRemoteVideoRefs(p => ({ ...p, [uId]: el })); } 
-          }} 
-          autoPlay 
-          playsInline
-          muted 
-          className="absolute top-0 left-0 w-1 h-1 opacity-0 pointer-events-none" 
-        />
+        <video key={uId} ref={(el) => { if (el && el.srcObject !== stream) { el.srcObject = stream; el.play().catch(e => e); setRemoteVideoRefs(p => ({ ...p, [uId]: el })); } }} autoPlay playsInline muted className="absolute top-0 left-0 w-1 h-1 opacity-0 pointer-events-none" />
       ))}
 
       <MapCanvas 
@@ -358,48 +311,40 @@ const GamePage = () => {
         onUpdateObject={handleUpdateObject}
         onDeleteObject={handleDeleteObject}
         floatingEmojis={floatingEmojis}
+        zoomLevel={zoomLevel}
+        onZoomChange={setZoomLevel}
       />
       
-      {/* GLASSSMORPHISM HUD TOP LEFT */}
       <div className="absolute top-6 left-6 text-white bg-[#0f172a]/90 p-5 rounded-2xl backdrop-blur-xl shadow-2xl border border-white/20 select-none pointer-events-none min-w-[200px]"> 
         <div className="flex items-center gap-3 mb-4 pb-4 border-b border-white/10"> 
           <div className={`w-2.5 h-2.5 rounded-full shadow-[0_0_10px_currentColor] transition-colors duration-500 ${isConnected ? 'bg-emerald-400 text-emerald-400' : 'bg-rose-400 text-rose-400'}`}></div> 
-          <span className="font-bold tracking-widest text-xs uppercase text-white/80">{isConnected ? t.online : t.offline}</span> 
+          <span className="font-bold tracking-widest text-xs uppercase text-white/80">{isConnected ? t('online') : t('offline')}</span> 
         </div> 
         <div className="space-y-3 font-mono text-xs"> 
-          <div className="flex justify-between items-center text-white/50"><span className="uppercase tracking-wider">{t.coords}</span><span className="text-white/90 bg-white/5 px-2 py-1 rounded">X:{x} Y:{y}</span></div> 
-          <div className="flex justify-between items-center text-white/50"><span className="uppercase tracking-wider">{t.nearby}</span><span className="text-emerald-400 bg-emerald-400/10 px-2 py-1 rounded font-bold">{otherUsers.length}</span></div> 
+          <div className="flex justify-between items-center text-white/50"><span className="uppercase tracking-wider">{t('coords')}</span><span className="text-white/90 bg-white/5 px-2 py-1 rounded">X:{x} Y:{y}</span></div> 
+          <div className="flex justify-between items-center text-white/50"><span className="uppercase tracking-wider">{t('nearby')}</span><span className="text-emerald-400 bg-emerald-400/10 px-2 py-1 rounded font-bold">{otherUsers.length}</span></div> 
         </div> 
       </div>
       
-      {/* GLASSMORPHISM MAIN DOCK BOTTOM */}
+      {isAdmin && (
+        <button onClick={() => setShowAddMenu(true)} className="absolute top-6 right-6 bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 px-4 rounded-xl shadow-lg border border-purple-400 transition-all z-50 text-sm flex gap-2 items-center">
+          {t('adminTools')}
+        </button>
+      )}
+
       <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 flex items-center gap-2 bg-[#0f172a]/90 backdrop-blur-xl px-4 py-3 rounded-2xl shadow-[0_20px_40px_rgba(0,0,0,0.6)] z-50 border border-white/20 h-[72px]">
-        
-        {/* Profile */}
         <div className="relative group cursor-pointer mr-2 border border-white/10 rounded-xl overflow-hidden hover:border-white/30 transition-colors">
-          <div className="w-12 h-12 bg-gradient-to-tr from-blue-600 to-purple-600 flex items-center justify-center text-white font-bold text-sm">
-            {username.slice(0,2).toUpperCase()}
-          </div>
-          <div className="absolute bottom-[calc(100%+16px)] left-1/2 transform -translate-x-1/2 mb-2 px-3 py-1.5 bg-black/80 backdrop-blur text-white/90 text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap border border-white/10">
-            {username}
-          </div>
+          <div className="w-12 h-12 bg-gradient-to-tr from-blue-600 to-purple-600 flex items-center justify-center text-white font-bold text-sm">{username.slice(0,2).toUpperCase()}</div>
         </div>
-
         <div className="w-px h-8 bg-white/10 mx-2"></div>
-
-        {/* Media Tools */}
         <button onClick={toggleMic} className={`w-12 h-12 flex items-center justify-center rounded-xl transition-all duration-300 ${isMicOn ? 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30' : 'bg-white/5 text-white/50 hover:bg-white/10 hover:text-white'}`}>
           {isMicOn ? <Icons.Mic /> : <Icons.MicOff />}
         </button>
         <button onClick={toggleCamera} className={`w-12 h-12 flex items-center justify-center rounded-xl transition-all duration-300 ${isCameraOn ? 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/30' : 'bg-white/5 text-white/50 hover:bg-white/10 hover:text-white'}`}>
           {isCameraOn ? <Icons.Video /> : <Icons.CameraOff />}
         </button>
-
         <div className="w-px h-8 bg-white/10 mx-2"></div>
-
-        {/* General Tools */}
         <button className="w-12 h-12 flex items-center justify-center rounded-xl bg-white/5 hover:bg-white/10 text-white/50 hover:text-white transition-all duration-300"><Icons.Monitor /></button>
-        
         <div className="relative">
           <button onClick={() => setShowEmojiPicker(!showEmojiPicker)} className={`w-12 h-12 flex items-center justify-center rounded-xl transition-all duration-300 ${showEmojiPicker ? 'bg-white/20 text-white shadow-inner' : 'bg-white/5 hover:bg-white/10 text-white/50 hover:text-white'}`}>
             <Icons.Smile />
@@ -409,35 +354,33 @@ const GamePage = () => {
               {EMOJI_LIST.map(e => <button key={e} onClick={() => sendEmoji(e)} className="text-xl hover:scale-125 transition-transform">{e}</button>)}
             </div>
           )}
+          {/* Admin Tools */}
+          {isAdmin && ( 
+            <> 
+              <div className="w-px h-8 bg-white/10 mx-2"></div> 
+              <div className="relative"> 
+                <button onClick={() => setShowAddMenu(!showAddMenu)} className={`w-12 h-12 flex items-center justify-center rounded-xl transition-all duration-300 ${showAddMenu ? 'bg-white text-black rotate-45 shadow-[0_0_20px_rgba(255,255,255,0.3)]' : 'bg-white/5 hover:bg-white/10 text-white'}`}> 
+                  <Icons.Plus /> 
+                </button> 
+                {showAddMenu && ( 
+                  <div className="absolute bottom-[calc(100%+24px)] left-1/2 transform -translate-x-1/2 w-64 bg-[#111827]/90 backdrop-blur-2xl rounded-2xl shadow-[0_20px_40px_rgba(0,0,0,0.6)] border border-white/10 overflow-hidden py-2 text-white/90 animate-fade-in-up origin-bottom"> 
+                    <button onClick={() => fileInputRef.current?.click()} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.Upload /></div> <span>Upload Map Background</span> </button> 
+                    <button onClick={handleClearBackground} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-rose-500/10 flex items-center gap-4 transition-colors text-rose-400"> <div className="text-rose-400/50"><Icons.Trash /></div> <span>Clear Map</span> </button> 
+                    <div className="h-px bg-white/5 my-1"></div> 
+                    <button onClick={() => objectFileInputRef.current?.click()} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.File /></div> <span>Upload Media File</span> </button>
+                    <button onClick={() => { setActiveModal('video'); setShowAddMenu(false); }} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.Youtube /></div> <span>Embed Video URL</span> </button> 
+                    <button onClick={() => { setActiveModal('iframe'); setShowAddMenu(false); }} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.Code /></div> <span>Embed iFrame</span> </button> 
+                    <button onClick={() => { setActiveModal('image'); setShowAddMenu(false); }} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.Monitor /></div> <span>Embed Image URL</span> </button> 
+                    <div className="h-px bg-white/5 my-1"></div> 
+                    <button onClick={() => { setInteractiveObjects([]); if(channel) activeChannelRef.current?.send({ type:'broadcast', event:'admin_delete_object', payload:{id:'ALL'}}); setShowAddMenu(false); }} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-rose-500/10 text-rose-400 flex items-center gap-4 transition-colors"> <div className="text-rose-400/50"><Icons.Trash /></div> <span>Delete All Objects</span> </button> 
+                  </div> 
+                )} 
+              </div> 
+            </> 
+          )}
         </div>
-
-        {/* Admin Tools */}
-        {username === 'AdminXiangFei123' && ( 
-          <> 
-            <div className="w-px h-8 bg-white/10 mx-2"></div> 
-            <div className="relative"> 
-              <button onClick={() => setShowAddMenu(!showAddMenu)} className={`w-12 h-12 flex items-center justify-center rounded-xl transition-all duration-300 ${showAddMenu ? 'bg-white text-black rotate-45 shadow-[0_0_20px_rgba(255,255,255,0.3)]' : 'bg-white/5 hover:bg-white/10 text-white'}`}> 
-                <Icons.Plus /> 
-              </button> 
-              {showAddMenu && ( 
-                <div className="absolute bottom-[calc(100%+24px)] left-1/2 transform -translate-x-1/2 w-64 bg-[#111827]/90 backdrop-blur-2xl rounded-2xl shadow-[0_20px_40px_rgba(0,0,0,0.6)] border border-white/10 overflow-hidden py-2 text-white/90 animate-fade-in-up origin-bottom"> 
-                  <button onClick={() => fileInputRef.current?.click()} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.Upload /></div> <span>Upload Map Background</span> </button> 
-                  <button onClick={handleClearBackground} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-rose-500/10 flex items-center gap-4 transition-colors text-rose-400"> <div className="text-rose-400/50"><Icons.Trash /></div> <span>Clear Map</span> </button> 
-                  <div className="h-px bg-white/5 my-1"></div> 
-                  <button onClick={() => objectFileInputRef.current?.click()} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.File /></div> <span>Upload Media File</span> </button>
-                  <button onClick={() => { setActiveModal('video'); setShowAddMenu(false); }} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.Youtube /></div> <span>Embed Video URL</span> </button> 
-                  <button onClick={() => { setActiveModal('iframe'); setShowAddMenu(false); }} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.Code /></div> <span>Embed iFrame</span> </button> 
-                  <button onClick={() => { setActiveModal('image'); setShowAddMenu(false); }} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.Monitor /></div> <span>Embed Image URL</span> </button> 
-                  <div className="h-px bg-white/5 my-1"></div> 
-                  <button onClick={() => { setInteractiveObjects([]); if(channel) channel.send({ type:'broadcast', event:'admin_delete_object', payload:{id:'ALL'}}); setShowAddMenu(false); }} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-rose-500/10 text-rose-400 flex items-center gap-4 transition-colors"> <div className="text-rose-400/50"><Icons.Trash /></div> <span>Delete All Objects</span> </button> 
-                </div> 
-              )} 
-            </div> 
-          </> 
-        )}
       </div>
       
-      {/* Hidden Data Inputs */}
       <input type="file" ref={fileInputRef} hidden accept="image/*" onChange={handleBackgroundUpload} />
       <input type="file" ref={objectFileInputRef} hidden accept="image/*,video/*,application/pdf" onChange={handleObjectUpload} />
       
@@ -462,6 +405,26 @@ const GamePage = () => {
           </div> 
         </div> 
       )}
+      
+      {/* Zoom Control Slider */}
+      <div className="absolute right-6 top-1/2 -translate-y-1/2 bg-[#0f172a]/90 backdrop-blur shadow-xl border border-white/10 rounded-full py-4 flex flex-col items-center gap-2 z-50">
+        <button onClick={() => setZoomLevel(Math.min(3.0, zoomLevel + 0.2))} className="text-slate-400 hover:text-white p-2">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+        </button>
+        <div className="w-10 h-32 flex items-center justify-center relative">
+          <input 
+            type="range" 
+            min="0.5" max="3" step="0.1" 
+            value={zoomLevel} 
+            onChange={e => setZoomLevel(parseFloat(e.target.value))} 
+            className="w-32 h-1 absolute -rotate-90 appearance-none bg-slate-700/50 rounded-full outline-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-blue-500 cursor-pointer"
+          />
+        </div>
+        <button onClick={() => setZoomLevel(Math.max(0.5, zoomLevel - 0.2))} className="text-slate-400 hover:text-white p-2">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+        </button>
+      </div>
+
     </div>
   );
 };

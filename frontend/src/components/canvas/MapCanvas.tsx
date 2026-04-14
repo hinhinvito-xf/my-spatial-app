@@ -38,6 +38,8 @@ interface MapCanvasProps {
   onUpdateObject?: (obj: InteractiveObject) => void;
   onDeleteObject?: (id: string) => void; // NEW PROP
   floatingEmojis?: FloatingEmoji[];
+  zoomLevel: number;
+  onZoomChange: (zoom: number) => void;
 }
 
 const TILE_SIZE = 48;
@@ -97,11 +99,10 @@ export const drawHumanSprite = (ctx: CanvasRenderingContext2D, config: AvatarCon
   ctx.restore();
 };
 
-export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, otherUsers, onInteract, localVideo, remoteVideos, backgroundImage, interactiveObjects = [], onUpdateObject, onDeleteObject, floatingEmojis = [] }) => {
+export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, otherUsers, onInteract, localVideo, remoteVideos, backgroundImage, interactiveObjects = [], onUpdateObject, onDeleteObject, floatingEmojis = [], zoomLevel, onZoomChange }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const objectsLayerRef = useRef<HTMLDivElement>(null);
-  const zoomRef = useRef<number>(1.0); 
   const backgroundImgRef = useRef<HTMLImageElement | null>(null);
   const mediaRefs = useRef<Record<string, HTMLVideoElement | HTMLIFrameElement>>({});
   
@@ -159,9 +160,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, othe
   useEffect(() => {
     if (!dragState) return;
     const handleMouseMove = (e: MouseEvent) => {
-        const zoom = zoomRef.current;
-        const dx = (e.clientX - dragState.startX) / (TILE_SIZE * zoom);
-        const dy = (e.clientY - dragState.startY) / (TILE_SIZE * zoom);
+        const dx = (e.clientX - dragState.startX) / (TILE_SIZE * zoomLevel);
+        const dy = (e.clientY - dragState.startY) / (TILE_SIZE * zoomLevel);
         let newObj = { ...interactiveObjects.find(o => o.id === dragState.id)! };
         if (dragState.mode === 'move') { newObj.x = dragState.initX + dx; newObj.y = dragState.initY + dy; } 
         else { newObj.width = Math.max(2, dragState.initW + dx); newObj.height = Math.max(2, dragState.initH + dy); }
@@ -179,7 +179,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, othe
     if (!ctx) return;
     const dpr = window.devicePixelRatio || 1;
     ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height); ctx.fillStyle = '#0f172a'; ctx.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height); ctx.restore(); 
-    const logicalW = canvasRef.current.width / dpr; const logicalH = canvasRef.current.height / dpr; const px = currentUser.x * TILE_SIZE + TILE_SIZE/2; const py = currentUser.y * TILE_SIZE + TILE_SIZE/2; const zoom = zoomRef.current;
+    const logicalW = canvasRef.current.width / dpr; const logicalH = canvasRef.current.height / dpr; const px = currentUser.x * TILE_SIZE + TILE_SIZE/2; const py = currentUser.y * TILE_SIZE + TILE_SIZE/2; const zoom = zoomLevel;
 
     if (objectsLayerRef.current) {
         const tx = (logicalW / 2) - (px * zoom);
@@ -217,8 +217,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, othe
   };
   
   useEffect(() => { const handleResize = () => { if(containerRef.current && canvasRef.current) { const {width, height} = containerRef.current.getBoundingClientRect(); const d = window.devicePixelRatio||1; canvasRef.current.width = width * d; canvasRef.current.height = height * d; const c=canvasRef.current.getContext('2d'); if(c) { c.scale(d,d); c.imageSmoothingEnabled = false; } canvasRef.current.style.width = '100%'; canvasRef.current.style.height = '100%'; } }; window.addEventListener('resize', handleResize); handleResize(); setTimeout(handleResize, 100); return () => window.removeEventListener('resize', handleResize); }, []);
-  useEffect(() => { requestAnimationFrame(render); }, [mapData, currentUser, otherUsers, backgroundImage, interactiveObjects, selectedId]); 
-  useEffect(() => { const c = canvasRef.current; if(!c)return; const h = (e: WheelEvent) => { e.preventDefault(); zoomRef.current = Math.min(Math.max(zoomRef.current - e.deltaY*0.001, 0.5), 3.0); }; c.addEventListener('wheel', h, {passive:false}); return () => c.removeEventListener('wheel', h); }, []);
+  useEffect(() => { requestAnimationFrame(render); }, [mapData, currentUser, otherUsers, backgroundImage, interactiveObjects, selectedId, zoomLevel]); 
+  useEffect(() => { const c = canvasRef.current; if(!c)return; const h = (e: WheelEvent) => { e.preventDefault(); onZoomChange(Math.min(Math.max(zoomLevel - e.deltaY*0.001, 0.5), 3.0)); }; c.addEventListener('wheel', h, {passive:false}); return () => c.removeEventListener('wheel', h); }, [zoomLevel, onZoomChange]);
 
   return (
     <div ref={containerRef} className="absolute inset-0 w-full h-full bg-slate-900 overflow-hidden">
