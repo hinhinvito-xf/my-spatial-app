@@ -104,17 +104,20 @@ export const useWebRTC = (
     };
 
     peer.onnegotiationneeded = async () => {
+      console.log('[NEGOTIATE] onnegotiationneeded fired for', targetId.slice(0,8), 'peer.signalingState:', peer.signalingState);
       try {
         makingOfferRef.current[targetId] = true;
         await peer.setLocalDescription();
+        console.log('[NEGOTIATE] localDescription set, type:', peer.localDescription?.type);
         if (peer.localDescription) {
-          channel.send({
+          const result = await channel.send({
             type: 'broadcast', event: 'signal',
             payload: { targetId, senderId: currentUserId, signal: { type: peer.localDescription.type, sdp: peer.localDescription.sdp } }
-          }).catch(() => {});
+          });
+          console.log('[NEGOTIATE] signal sent, result:', result);
         }
       } catch (err) {
-        console.error("Negotiation error", err);
+        console.error("[NEGOTIATE] error:", err);
       } finally {
         makingOfferRef.current[targetId] = false;
       }
