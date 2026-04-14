@@ -32,7 +32,7 @@ export const useWebRTC = (
   // stay at readyState 0 forever and canvas drawImage gets blank frames.
   useEffect(() => {
     const container = document.createElement('div');
-    container.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;overflow:hidden;pointer-events:none;opacity:0.01;z-index:-1;';
+    container.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:640px;height:480px;pointer-events:none;';
     document.body.appendChild(container);
     videoContainerRef.current = container;
     return () => { container.remove(); };
@@ -79,7 +79,7 @@ export const useWebRTC = (
         if (!remoteVideoRefs.current[targetId]) {
           const v = document.createElement('video');
           v.autoplay = true; v.playsInline = true; v.muted = true;
-          v.style.cssText = 'width:1px;height:1px;';
+          v.style.cssText = 'width:320px;height:240px;';
           v.srcObject = e.streams[0];
           videoContainerRef.current?.appendChild(v);
           v.play().catch(() => {});

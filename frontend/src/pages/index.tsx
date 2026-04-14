@@ -135,7 +135,7 @@ const GamePage = () => {
   useEffect(() => {
     const v = document.createElement('video');
     v.autoplay = true; v.playsInline = true; v.muted = true;
-    v.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0.01;pointer-events:none;z-index:-1;';
+    v.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:320px;height:240px;pointer-events:none;';
     document.body.appendChild(v);
     localVideoRef.current = v;
     return () => { v.remove(); };
