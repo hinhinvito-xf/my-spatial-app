@@ -115,6 +115,7 @@ const GamePage = () => {
   
   // Realtime Supabase
   const [channel, setChannel] = useState<RealtimeChannel | null>(null);
+  const activeChannelRef = useRef<RealtimeChannel | null>(null);
   
   // Audio / Video 
   const [isCameraOn, setIsCameraOn] = useState(false);
@@ -206,28 +207,39 @@ const GamePage = () => {
     const chunkY = Math.floor(y / CHUNK_SIZE);
     const roomName = `spatial_chunk_${chunkX}_${chunkY}`;
     
+    const currentChannel = activeChannelRef.current;
+    
     // Check if we are already in the right channel
-    if (channel && channel.topic === `realtime:${roomName}`) return;
+    if (currentChannel && currentChannel.topic === `realtime:${roomName}`) return;
+    
     // Leave previous channel
-    if (channel) supabase.removeChannel(channel);
+    if (currentChannel) {
+      supabase.removeChannel(currentChannel);
+    }
 
-    const newChannel = supabase.channel(roomName, { config: { presence: { key: userId } } });
+    const newChannel = supabase.channel(roomName, { 
+      config: { 
+        presence: { key: userId },
+        broadcast: { ack: true }
+      } 
+    });
     
     newChannel
       .on('presence', { event: 'sync' }, () => {
         const state = newChannel.presenceState();
         const users: User[] = Object.keys(state).map(key => {
           const presence = state[key][0] as any;
+          if (!presence) return null;
           return {
             id: key,
-            displayName: presence.displayName,
+            displayName: presence.displayName || 'Unknown',
             x: presence.x,
             y: presence.y,
             direction: presence.direction,
             avatarConfig: presence.avatarConfig,
             isCameraOn: presence.isCameraOn
           };
-        }).filter(u => u.id !== userId);
+        }).filter((u): u is User => u !== null && u.id !== userId);
         setOtherUsers(users);
       })
       .on('broadcast', { event: 'admin_add_object' }, ({ payload }) => setInteractiveObjects(prev => [...prev, payload]))
@@ -241,22 +253,32 @@ const GamePage = () => {
         }
       });
       
+    activeChannelRef.current = newChannel;
     setChannel(newChannel);
 
     return () => {
-      supabase.removeChannel(newChannel);
+      // Don't remove unconditionally so we can survive React strict mode or minor unmounts natively
     };
-  // We explicitly run this when x, y crosses boundaries 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isGameStarted, Math.floor(x / CHUNK_SIZE), Math.floor(y / CHUNK_SIZE)]);
 
-  // Track position updates without rejoining channel
+  // Track position updates without rejoining channel, properly throttled
+  const trackRef = useRef(0);
   useEffect(() => {
-    if (isConnected && channel) {
-      // Throttle presence tracking a bit internally if performance drops
-      channel.track({ displayName: username, x, y, direction, avatarConfig: avatar, isCameraOn });
+    if (isConnected && channel && isGameStarted) {
+      const now = Date.now();
+      if (now - trackRef.current > 150) { // Limit to ~6 updates per second to avoid Supabase rate limits
+        channel.track({ displayName: username, x, y, direction, avatarConfig: avatar, isCameraOn }).catch(() => {});
+        trackRef.current = now;
+      } else {
+        const timeout = setTimeout(() => {
+          channel.track({ displayName: username, x, y, direction, avatarConfig: avatar, isCameraOn }).catch(() => {});
+          trackRef.current = Date.now();
+        }, 150);
+        return () => clearTimeout(timeout);
+      }
     }
-  }, [x, y, direction, isCameraOn, isConnected, avatar, username]);
+  }, [x, y, direction, isCameraOn, isConnected, avatar, username, channel, isGameStarted]);
 
 
   if (!isGameStarted) {
