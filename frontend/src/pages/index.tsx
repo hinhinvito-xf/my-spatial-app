@@ -109,7 +109,7 @@ const GamePage = () => {
   const sendEmoji = (emoji: string) => {
     const newEmoji = { id: uuidv4(), text: emoji, x, y, timestamp: Date.now() };
     setFloatingEmojis(prev => [...prev, newEmoji]);
-    if (channel) channel.send({ type: 'broadcast', event: 'emoji', payload: newEmoji });
+    if (activeChannelRef.current) activeChannelRef.current.send({ type: 'broadcast', event: 'emoji', payload: newEmoji });
     setShowEmojiPicker(false);
   };
   
@@ -189,23 +189,21 @@ const GamePage = () => {
 
     const newObj: InteractiveObject = { id: uuidv4(), type, x, y: y-4, width: 6, height: 4, src: url };
     setInteractiveObjects(prev => [...prev, newObj]);
-    if (channel) channel.send({ type: 'broadcast', event: 'admin_add_object', payload: newObj });
+    if (channel) activeChannelRef.current?.send({ type: 'broadcast', event: 'admin_add_object', payload: newObj });
     e.target.value = '';
     setShowAddMenu(false);
   };
 
-  const handleClearBackground = () => { setBackgroundImage(null); if (channel) channel.send({ type: 'broadcast', event: 'admin_clear_background' }); };
-  const handleBackgroundUpload = async (e: React.ChangeEvent<HTMLInputElement>) => { const file = e.target.files?.[0]; if (!file) return; setBackgroundImage(URL.createObjectURL(file)); const fn = `bg_${Date.now()}_${file.name}`; const {data, error} = await supabase.storage.from('spatial_media').upload(`bg/${fn}`, file); const bgUrl = !error && data ? supabase.storage.from('spatial_media').getPublicUrl(`bg/${fn}`).data.publicUrl : URL.createObjectURL(file); if (channel) channel.send({ type: 'broadcast', event: 'admin_upload_background', payload: { image: bgUrl } }); };
-  const handleAddObject = (type: 'video'|'iframe'|'image', src: string) => { const newObj: InteractiveObject = { id: uuidv4(), type, x, y: y-4, width: 6, height: 4, src }; setInteractiveObjects(prev => [...prev, newObj]); if (channel) channel.send({ type: 'broadcast', event: 'admin_add_object', payload: newObj }); setActiveModal(null); setModalInput(""); };
-  const handleDeleteObject = (id: string) => { setInteractiveObjects(prev => prev.filter(o => o.id !== id)); if (channel) channel.send({ type: 'broadcast', event: 'admin_delete_object', payload: { id } }); };
-  const handleUpdateObject = (updatedObj: InteractiveObject) => { setInteractiveObjects(prev => prev.map(o => o.id === updatedObj.id ? updatedObj : o)); if (channel) channel.send({ type: 'broadcast', event: 'admin_update_object', payload: updatedObj }); };
+  const handleClearBackground = () => { setBackgroundImage(null); if (channel) activeChannelRef.current?.send({ type: 'broadcast', event: 'admin_clear_background' }); };
+  const handleBackgroundUpload = async (e: React.ChangeEvent<HTMLInputElement>) => { const file = e.target.files?.[0]; if (!file) return; setBackgroundImage(URL.createObjectURL(file)); const fn = `bg_${Date.now()}_${file.name}`; const {data, error} = await supabase.storage.from('spatial_media').upload(`bg/${fn}`, file); const bgUrl = !error && data ? supabase.storage.from('spatial_media').getPublicUrl(`bg/${fn}`).data.publicUrl : URL.createObjectURL(file);    if (channel) activeChannelRef.current?.send({ type: 'broadcast', event: 'admin_upload_background', payload: { image: bgUrl } }); };
+  const handleAddObject = (type: 'video'|'iframe'|'image', src: string) => { const newObj: InteractiveObject = { id: uuidv4(), type, x, y: y-4, width: 6, height: 4, src }; setInteractiveObjects(prev => [...prev, newObj]); if (channel) activeChannelRef.current?.send({ type: 'broadcast', event: 'admin_add_object', payload: newObj }); setActiveModal(null); setModalInput(""); };
+  const handleDeleteObject = (id: string) => { setInteractiveObjects(prev => prev.filter(o => o.id !== id));    if (channel) activeChannelRef.current?.send({ type: 'broadcast', event: 'admin_delete_object', payload: { id } }); };
+  const handleUpdateObject = (updatedObj: InteractiveObject) => { setInteractiveObjects(prev => prev.map(o => o.id === updatedObj.id ? updatedObj : o));    if (channel) activeChannelRef.current?.send({ type: 'broadcast', event: 'admin_update_object', payload: updatedObj }); };
 
-  // Setup Supabase Connection & Chuncking
+  // Setup Supabase Connection
   useEffect(() => {
     if (!isGameStarted) return;
-    const chunkX = Math.floor(x / CHUNK_SIZE);
-    const chunkY = Math.floor(y / CHUNK_SIZE);
-    const roomName = `spatial_chunk_${chunkX}_${chunkY}`;
+    const roomName = `spatial_world_global`; // Single instance room eliminates chunk-boundary crossover ghosting
     
     const currentChannel = activeChannelRef.current;
     
@@ -263,7 +261,7 @@ const GamePage = () => {
       // Don't remove unconditionally so we can survive React strict mode or minor unmounts natively
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isGameStarted, Math.floor(x / CHUNK_SIZE), Math.floor(y / CHUNK_SIZE)]);
+  }, [isGameStarted]);
 
   // Track position updates without rejoining channel, properly throttled
   const trackRef = useRef(0);
