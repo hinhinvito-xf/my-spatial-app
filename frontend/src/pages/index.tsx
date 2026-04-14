@@ -84,7 +84,7 @@ const generateCityMap = (size:number):MapData => {
   return { width:size, height:size, tiles, spawnPoints:[], objects:[] };
 };
 
-const getRandomSpawn = (map:MapData) => ({ x: Math.floor(Math.random()*(map.width-20))+10, y: Math.floor(Math.random()*(map.height-20))+10 });
+const getRandomSpawn = (map:MapData) => ({ x: 20, y: 20 });
 
 const GamePage = () => {
   const [userId] = useState(() => uuidv4());
@@ -267,19 +267,29 @@ const GamePage = () => {
 
   // Track position updates without rejoining channel, properly throttled
   const trackRef = useRef(0);
+  const trackTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
   useEffect(() => {
-    if (isConnected && channel && isGameStarted) {
-      const now = Date.now();
-      if (now - trackRef.current > 150) { // Limit to ~6 updates per second to avoid Supabase rate limits
-        channel.track({ displayName: username, x, y, direction, avatarConfig: avatar, isCameraOn }).catch(() => {});
-        trackRef.current = now;
-      } else {
-        const timeout = setTimeout(() => {
-          channel.track({ displayName: username, x, y, direction, avatarConfig: avatar, isCameraOn }).catch(() => {});
-          trackRef.current = Date.now();
-        }, 150);
-        return () => clearTimeout(timeout);
+    if (!isConnected || !channel || !isGameStarted) return;
+    
+    const payload = { displayName: username, x, y, direction, avatarConfig: avatar, isCameraOn };
+    const now = Date.now();
+    
+    if (now - trackRef.current > 150) { 
+      // Safe to send immediately
+      channel.track(payload).catch(() => {});
+      trackRef.current = now;
+      if (trackTimeoutRef.current) {
+        clearTimeout(trackTimeoutRef.current);
+        trackTimeoutRef.current = null;
       }
+    } else if (!trackTimeoutRef.current) {
+      // Schedule the next update safely without delaying infinitely 
+      trackTimeoutRef.current = setTimeout(() => {
+        channel.track(payload).catch(() => {});
+        trackRef.current = Date.now();
+        trackTimeoutRef.current = null;
+      }, 150);
     }
   }, [x, y, direction, isCameraOn, isConnected, avatar, username, channel, isGameStarted]);
 
