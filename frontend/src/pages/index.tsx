@@ -28,7 +28,7 @@ const TRANSLATIONS = {
   en: { title:"Character Creator", subtitle:"Customize your hero", preview:"PREVIEW", displayName:"Display Name", placeholder:"Enter your name...", join:"Join World", online:"ONLINE", offline:"OFFLINE", coords:"Coordinates", nearby:"Nearby", camOn:"Turn Camera ON", camOff:"Turn Camera OFF", controls:"Move: WASD / Arrows", zoom:"Zoom: Scroll", labels:{ skin:"Skin", hair:"Hair", hat:"Hat", face:"Face", shirt:"Shirt", pants:"Pants", shoes:"Shoes"} },
 };
 
-type Language = 'en';
+
 const AVATAR_OPTIONS = {
   skin:['#fca5a5','#fcd34d','#8b5cf6','#cbd5e1','#573318','#3e2723','#ffcc80'],
   hair:['none','short','long','spiky','messy','bob'],
@@ -123,7 +123,7 @@ const GamePage = () => {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [localVideoEl, setLocalVideoEl] = useState<HTMLVideoElement | null>(null);
   
-  const { remoteStreams, updateVolumes } = useWebRTC(channel, userId, localStream);
+  const { remoteStreams, updateVolumes } = useWebRTC(channel, userId, localStream, otherUsers);
   const [remoteVideoRefs, setRemoteVideoRefs] = useState<Record<string, HTMLVideoElement>>({});
 
   useEffect(() => {

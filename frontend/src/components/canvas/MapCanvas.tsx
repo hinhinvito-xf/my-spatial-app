@@ -105,6 +105,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, othe
   const objectsLayerRef = useRef<HTMLDivElement>(null);
   const backgroundImgRef = useRef<HTMLImageElement | null>(null);
   const mediaRefs = useRef<Record<string, HTMLVideoElement | HTMLIFrameElement>>({});
+  const lerpTargetsRef = useRef<Record<string, {x: number, y: number}>>({});
   
   const [dragState, setDragState] = useState<{ id: string, startX: number, startY: number, initX: number, initY: number, initW: number, initH: number, mode: 'move' | 'resize' } | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -196,8 +197,48 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, othe
     if (backgroundImgRef.current) { const mapPixelWidth = mapData.width * TILE_SIZE; const mapPixelHeight = mapData.height * TILE_SIZE; ctx.drawImage(backgroundImgRef.current, 0, 0, mapPixelWidth, mapPixelHeight); } 
     else { for (let y = startRow; y < endRow; y++) { for (let x = startCol; x < endCol; x++) { if (y>=0 && y<mapData.height && x>=0 && x<mapData.width) { const tileType = mapData.tiles[y][x]; if (tileType === 0) { ctx.fillStyle = (x+y)%2===0 ? '#e2e8f0' : '#f1f5f9'; ctx.fillRect(x*TILE_SIZE, y*TILE_SIZE, TILE_SIZE, TILE_SIZE); } else { ctx.fillStyle = '#1e293b'; ctx.fillRect(x*TILE_SIZE, y*TILE_SIZE - TILE_SIZE/2, TILE_SIZE, TILE_SIZE * 1.5); } } } } }
 
+    // Smooth Remote Position LERP Filter to prevent network ghosting/stutter
     const visibleUsers = [...otherUsers, currentUser].filter(u => u.x >= startCol - 2 && u.x <= endCol + 2 && u.y >= startRow - 2 && u.y <= endRow + 2).sort((a, b) => a.y - b.y);
-    visibleUsers.forEach(u => { const cx = u.x * TILE_SIZE + TILE_SIZE/2; const cy = u.y * TILE_SIZE + TILE_SIZE; ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.beginPath(); ctx.ellipse(cx, cy - 4, TILE_SIZE/3, TILE_SIZE/6, 0, 0, Math.PI*2); ctx.fill(); ctx.save(); ctx.translate(cx - 16, cy - 32); let videoSource = null; if (u.isCameraOn) { if (u.id === currentUser.id) videoSource = localVideo; else if (remoteVideos && remoteVideos[u.id]) videoSource = remoteVideos[u.id]; } drawHumanSprite(ctx, u.avatarConfig, u.direction, true, 1.0, videoSource); ctx.restore(); ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'center'; const w = ctx.measureText(u.displayName).width + 12; ctx.fillRect(cx - w/2, cy - 45, w, 16); ctx.fillStyle = '#fff'; ctx.fillText(u.displayName, cx, cy - 34); });
+    
+    visibleUsers.forEach(u => { 
+      let renderX = u.x;
+      let renderY = u.y;
+
+      if (u.id !== currentUser.id) {
+        if (!lerpTargetsRef.current[u.id]) lerpTargetsRef.current[u.id] = {x: u.x, y: u.y};
+        const target = lerpTargetsRef.current[u.id];
+        // Calculate absolute distance jump (to detect teleports vs walks)
+        const dist = Math.sqrt(Math.pow(u.x - target.x, 2) + Math.pow(u.y - target.y, 2));
+        if (dist > 5) {
+          // If they jumped more than 5 tiles, snap instantly
+          target.x = u.x; target.y = u.y;
+        } else {
+          // IIR Filter for buttery smooth 60fps movement interpolation mid-network packet
+          target.x += (u.x - target.x) * 0.15;
+          target.y += (u.y - target.y) * 0.15;
+        }
+        renderX = target.x;
+        renderY = target.y;
+      }
+
+      const cx = renderX * TILE_SIZE + TILE_SIZE/2; 
+      const cy = renderY * TILE_SIZE + TILE_SIZE; 
+      ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.beginPath(); ctx.ellipse(cx, cy - 4, TILE_SIZE/3, TILE_SIZE/6, 0, 0, Math.PI*2); ctx.fill(); 
+      ctx.save(); ctx.translate(cx - 16, cy - 32); 
+      let videoSource = null; 
+      if (u.isCameraOn) { 
+        if (u.id === currentUser.id) videoSource = localVideo; 
+        else if (remoteVideos && remoteVideos[u.id]) {
+          const v = remoteVideos[u.id];
+          if (v.readyState >= 2) videoSource = v; 
+        }
+      } 
+      drawHumanSprite(ctx, u.avatarConfig, u.direction, true, 1.0, videoSource); 
+      ctx.restore(); 
+      ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'center'; 
+      const w = ctx.measureText(u.displayName).width + 12; ctx.fillRect(cx - w/2, cy - 45, w, 16); 
+      ctx.fillStyle = '#fff'; ctx.fillText(u.displayName, cx, cy - 34); 
+    });
 
     floatingEmojis?.forEach(e => {
         const cx = e.x * TILE_SIZE + TILE_SIZE/2;
