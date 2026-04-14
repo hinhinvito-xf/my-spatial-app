@@ -262,11 +262,14 @@ const GamePage = () => {
   const trackRef = useRef(0);
   const trackTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
+  const latestPosRef = useRef({x, y});
+  useEffect(() => { latestPosRef.current = {x, y, direction}; }, [x,y, direction]);
+
   // 1. PRESENCE METADATA: Track globally online/offline status, name, and camera feed exactly once or when metadata settings change.
-  // We purposely exclude x, y from dependencies so moving does NOT crash the network presence limits.
+  // We avoid directly depending on x, y to prevent rate-limited track thrashing.
   useEffect(() => {
     if (!isConnected || !channel || !isGameStarted) return;
-    channel.track({ displayName: username, x, y, direction, avatarConfig: avatar, isCameraOn }).catch(() => {});
+    channel.track({ displayName: username, x: latestPosRef.current.x, y: latestPosRef.current.y, direction: latestPosRef.current.direction, avatarConfig: avatar, isCameraOn }).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConnected, channel, isGameStarted, avatar, username, isCameraOn]);
   
@@ -332,7 +335,7 @@ const GamePage = () => {
 
   return (
     <div className="relative w-screen h-screen bg-[#020617] overflow-hidden font-sans">
-      <video ref={localVideoRef} autoPlay playsInline muted className="absolute top-0 left-0 w-[64px] h-[64px] opacity-[0.01] pointer-events-none -z-50 object-cover" />
+      <video ref={localVideoRef} autoPlay playsInline muted className="absolute top-0 left-0 w-[4px] h-[4px] opacity-[0.05] pointer-events-none z-[9999] object-cover mix-blend-screen" />
       {Object.entries(remoteStreams).map(([uId, stream]) => (
         <video key={uId} ref={(el) => { 
           if (el && el.srcObject !== stream) { 
@@ -340,7 +343,7 @@ const GamePage = () => {
             el.play().catch(e => console.log('Autoplay error', e)); 
             remoteVideoRefs.current[uId] = el;
           } 
-        }} autoPlay playsInline muted className="absolute top-0 left-0 w-[64px] h-[64px] opacity-[0.01] pointer-events-none -z-50 object-cover" />
+        }} autoPlay playsInline muted className="absolute top-0 left-0 w-[4px] h-[4px] opacity-[0.05] pointer-events-none z-[9999] object-cover mix-blend-screen" />
       ))}
 
       <MapCanvas 
