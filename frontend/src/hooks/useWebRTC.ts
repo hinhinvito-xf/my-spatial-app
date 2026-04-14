@@ -5,8 +5,8 @@ const getDistance = (p1: {x:number, y:number}, p2: {x:number, y:number}) => {
   return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
 };
 
-export const useWebRTC = (channel: RealtimeChannel | null, currentUserId: string | undefined, localStream: MediaStream | null, otherUsers: {id: string}[] = []) => {
-  const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
+export const useWebRTC = (channel: RealtimeChannel | null, currentUserId: string | undefined, localStream: MediaStream | null, otherUsers: {id: string, x?: number, y?: number}[] = [], myPos: {x: number, y: number} = {x:0,y:0}) => {
+  const remoteVideoRefs = useRef<Record<string, HTMLVideoElement>>({});
   const peersRef = useRef<Record<string, RTCPeerConnection>>({});
   const localStreamRef = useRef<MediaStream | null>(null);
   const audioElementsRef = useRef<Record<string, HTMLAudioElement>>({});
@@ -44,7 +44,18 @@ export const useWebRTC = (channel: RealtimeChannel | null, currentUserId: string
 
     peer.ontrack = (e) => {
       if (e.streams && e.streams[0]) {
-        setRemoteStreams(prev => ({ ...prev, [targetId]: e.streams[0] }));
+        // Pure Javascript Memory HTMLVideoElement creation (no DOM needed!)
+        if (!remoteVideoRefs.current[targetId]) {
+          const v = document.createElement('video');
+          v.autoplay = true; v.playsInline = true; v.muted = true;
+          v.srcObject = e.streams[0];
+          v.play().catch(e => console.log("Video block", e));
+          remoteVideoRefs.current[targetId] = v;
+        } else if (remoteVideoRefs.current[targetId].srcObject !== e.streams[0]) {
+          remoteVideoRefs.current[targetId].srcObject = e.streams[0];
+          remoteVideoRefs.current[targetId].play().catch(e=>e);
+        }
+
         if (!audioElementsRef.current[targetId]) {
           const audio = new Audio();
           audio.srcObject = e.streams[0];
@@ -76,33 +87,45 @@ export const useWebRTC = (channel: RealtimeChannel | null, currentUserId: string
     return peer;
   }, [channel, currentUserId]);
 
-  // Sync peer connections organically based on Supabase Presence state
+  // Proximity Culling WebRTC Tunnels natively
   useEffect(() => {
     if (!channel || !currentUserId) return;
     
-    // Check for NEW users to open peer connection tunnels
+    const activeIds = new Set<string>();
+
     otherUsers.forEach(u => {
-      if (!peersRef.current[u.id] && u.id !== currentUserId) {
-        // Always create peer. Only one side initiates the forceful data tunnel.
-        createPeer(u.id, currentUserId < u.id);
+      // Connect Tunnels ONLY if within 10 tiles!
+      const dist = (u.x !== undefined && u.y !== undefined) ? getDistance(myPos, {x: u.x, y: u.y}) : 0;
+      if (dist <= 10) {
+        activeIds.add(u.id);
+        if (!peersRef.current[u.id] && u.id !== currentUserId) {
+          createPeer(u.id, currentUserId < u.id);
+        }
       }
     });
 
-    // Check for DROPPED users to close peer
-    const activeIds = new Set(otherUsers.map(u => u.id));
+    // CULL users out of bounds instantly
     Object.keys(peersRef.current).forEach(existingId => {
       if (!activeIds.has(existingId)) {
         peersRef.current[existingId].close();
         delete peersRef.current[existingId];
+
+        if (remoteVideoRefs.current[existingId]) {
+          remoteVideoRefs.current[existingId].pause();
+          remoteVideoRefs.current[existingId].srcObject = null;
+          remoteVideoRefs.current[existingId].remove();
+          delete remoteVideoRefs.current[existingId];
+        }
+
         if (audioElementsRef.current[existingId]) {
           audioElementsRef.current[existingId].pause();
+          audioElementsRef.current[existingId].srcObject = null;
           delete audioElementsRef.current[existingId];
         }
-        setRemoteStreams(prev => { const next = {...prev}; delete next[existingId]; return next; });
       }
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [otherUsers, channel, currentUserId]);
+  }, [otherUsers, channel, currentUserId, myPos.x, myPos.y]);
 
   useEffect(() => {
     localStreamRef.current = localStream;
@@ -208,5 +231,5 @@ export const useWebRTC = (channel: RealtimeChannel | null, currentUserId: string
     });
   }, [localStream]); 
 
-  return { remoteStreams, updateVolumes };
+  return { remoteVideoRefs, updateVolumes };
 };

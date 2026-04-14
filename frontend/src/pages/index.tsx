@@ -131,14 +131,18 @@ const GamePage = () => {
   const [isMicOn, setIsMicOn] = useState(false);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   
-  const localVideoRef = useRef<HTMLVideoElement>(null);
-  const remoteVideoRefs = useRef<Record<string, HTMLVideoElement>>({});
+  const localVideoRef = useRef<HTMLVideoElement | null>(null);
+  if (typeof document !== 'undefined' && !localVideoRef.current) {
+    const v = document.createElement('video');
+    v.autoplay = true; v.playsInline = true; v.muted = true;
+    localVideoRef.current = v;
+  }
   
-  const { remoteStreams, updateVolumes } = useWebRTC(channel, userId, localStream, otherUsers);
+  const { remoteVideoRefs, updateVolumes } = useWebRTC(channel, isConnected ? userId : undefined, (isCameraOn || isMicOn) ? localStream : null, otherUsers, {x, y});
 
   useEffect(() => {
     if (updateVolumes && otherUsers.length > 0) updateVolumes({x, y}, otherUsers.map(u => ({id: u.id, x: u.x, y: u.y})));
-  }, [x, y, otherUsers, updateVolumes, remoteStreams]);
+  }, [x, y, otherUsers, updateVolumes]);
 
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [activeModal, setActiveModal] = useState<'video'|'iframe'|'image'|null>(null);
@@ -262,8 +266,8 @@ const GamePage = () => {
   const trackRef = useRef(0);
   const trackTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
-  const latestPosRef = useRef({x, y});
-  useEffect(() => { latestPosRef.current = {x, y, direction}; }, [x,y, direction]);
+  const latestPosRef = useRef<{x: number, y: number, direction: 'down' | 'up' | 'left' | 'right'}>({x: 20, y: 20, direction: 'down'});
+  useEffect(() => { latestPosRef.current = {x, y, direction}; }, [x, y, direction]);
 
   // 1. PRESENCE METADATA: Track globally online/offline status, name, and camera feed exactly once or when metadata settings change.
   // We avoid directly depending on x, y to prevent rate-limited track thrashing.
@@ -335,17 +339,6 @@ const GamePage = () => {
 
   return (
     <div className="relative w-screen h-screen bg-[#020617] overflow-hidden font-sans">
-      <video ref={localVideoRef} autoPlay playsInline muted className="absolute top-0 left-0 w-[128px] h-[128px] opacity-100 pointer-events-none z-[9999] object-cover" style={{ clipPath: 'inset(100%)' }} />
-      {Object.entries(remoteStreams).map(([uId, stream]) => (
-        <video key={uId} ref={(el) => { 
-          if (el && el.srcObject !== stream) { 
-            el.srcObject = stream; 
-            el.play().catch(e => console.log('Autoplay error', e)); 
-            remoteVideoRefs.current[uId] = el;
-          } 
-        }} autoPlay playsInline muted className="absolute top-0 left-0 w-[128px] h-[128px] opacity-100 pointer-events-none z-[9999] object-cover" style={{ clipPath: 'inset(100%)' }} />
-      ))}
-
       <MapCanvas 
         mapData={mapData} 
         currentUser={{id: userId, displayName: username, x, y, avatarConfig: avatar, direction, isCameraOn}} 
