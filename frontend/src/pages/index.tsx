@@ -143,9 +143,36 @@ const GamePage = () => {
   
   const { remoteVideoRefs, updateVolumes } = useWebRTC(channel, isConnected ? userId : undefined, (isCameraOn || isMicOn) ? localStream : null, otherUsers, {x, y});
 
+  const remoteCamFramesRef = useRef<Record<string, HTMLImageElement>>({});
+
   useEffect(() => {
     if (updateVolumes && otherUsers.length > 0) updateVolumes({x, y}, otherUsers.map(u => ({id: u.id, x: u.x, y: u.y})));
   }, [x, y, otherUsers, updateVolumes]);
+
+  // Broadcast camera frames as tiny JPEG thumbnails (no WebRTC needed!)
+  useEffect(() => {
+    if (!isCameraOn || !channel || !localVideoRef.current) return;
+    
+    const thumbCanvas = document.createElement('canvas');
+    thumbCanvas.width = 28;
+    thumbCanvas.height = 24;
+    const thumbCtx = thumbCanvas.getContext('2d')!;
+    
+    const interval = setInterval(() => {
+      const video = localVideoRef.current;
+      if (video && video.readyState >= 2) {
+        thumbCtx.drawImage(video, 0, 0, 28, 24);
+        const dataUrl = thumbCanvas.toDataURL('image/jpeg', 0.4);
+        channel.send({
+          type: 'broadcast',
+          event: 'cam_frame',
+          payload: { userId, frame: dataUrl }
+        }).catch(() => {});
+      }
+    }, 200); // 5 FPS
+    
+    return () => clearInterval(interval);
+  }, [isCameraOn, channel, userId]);
 
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [activeModal, setActiveModal] = useState<'video'|'iframe'|'image'|null>(null);
@@ -254,6 +281,13 @@ const GamePage = () => {
       .on('broadcast', { event: 'admin_update_object' }, ({ payload }) => setInteractiveObjects(prev => prev.map(o => o.id === payload.id ? payload : o)))
       .on('broadcast', { event: 'admin_delete_object' }, ({ payload }) => setInteractiveObjects(prev => payload.id === 'ALL' ? [] : prev.filter(o => o.id !== payload.id)))
       .on('broadcast', { event: 'emoji' }, ({ payload }) => setFloatingEmojis(prev => [...prev, { ...payload, timestamp: Date.now() }]))
+      .on('broadcast', { event: 'cam_frame' }, ({ payload }) => {
+        if (payload.userId === userId) return; // skip own frames
+        if (!remoteCamFramesRef.current[payload.userId]) {
+          remoteCamFramesRef.current[payload.userId] = new Image();
+        }
+        remoteCamFramesRef.current[payload.userId].src = payload.frame;
+      })
       .on('broadcast', { event: 'move' }, ({ payload }) => {
         setOtherUsers(prev => {
           if (!prev.some(u => u.id === payload.userId)) return prev;
@@ -348,6 +382,7 @@ const GamePage = () => {
         otherUsers={otherUsers}
         localVideoRef={localVideoRef} 
         remoteVideoRefs={remoteVideoRefs}
+        remoteCamFrames={remoteCamFramesRef}
         backgroundImage={backgroundImage}
         interactiveObjects={interactiveObjects} 
         onUpdateObject={handleUpdateObject}

@@ -32,6 +32,7 @@ interface MapCanvasProps {
   otherUsers: User[];
   localVideoRef: React.RefObject<HTMLVideoElement>;
   remoteVideoRefs: React.MutableRefObject<Record<string, HTMLVideoElement>>;
+  remoteCamFrames: React.MutableRefObject<Record<string, HTMLImageElement>>;
   backgroundImage?: string | null;
   onInteract?: (userId: string) => void;
   interactiveObjects?: InteractiveObject[];
@@ -51,7 +52,7 @@ const getYouTubeEmbed = (url: string) => {
 };
 
 // ... (drawHumanSprite is unchanged) ...
-export const drawHumanSprite = (ctx: CanvasRenderingContext2D, config: AvatarConfig | undefined, dir: Direction = 'down', isMoving: boolean = false, scale: number = 1, videoElement?: HTMLVideoElement | null) => {
+export const drawHumanSprite = (ctx: CanvasRenderingContext2D, config: AvatarConfig | undefined, dir: Direction = 'down', isMoving: boolean = false, scale: number = 1, faceImage?: HTMLVideoElement | HTMLImageElement | null) => {
   const c = config || { hat: 'none', hair: 'none', face: 'neutral', shirt: '#3b82f6', pants: '#000', shoes: '#000', skin: '#fca5a5' };
   ctx.save(); ctx.scale(scale, scale);
   const rect = (color: string, x: number, y: number, w: number, h: number) => { ctx.fillStyle = color; ctx.fillRect(x, y, w, h); };
@@ -66,8 +67,12 @@ export const drawHumanSprite = (ctx: CanvasRenderingContext2D, config: AvatarCon
   else { rect(c.shirt, 14, bodyY + 2, 4, 8); }
   const headY = 2 + bob;
   rect(c.skin, 9, headY, 14, 12); 
-  if (videoElement && videoElement.readyState >= 2 && dir === 'down') {
-    ctx.save(); ctx.beginPath(); ctx.rect(9, headY, 14, 12); ctx.clip(); try { ctx.drawImage(videoElement, 9, headY, 14, 12); } catch (e) {} ctx.restore(); ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 1; ctx.strokeRect(9.5, headY+0.5, 13, 11);
+  const faceReady = faceImage && dir === 'down' && (
+    (faceImage instanceof HTMLVideoElement && faceImage.readyState >= 2) ||
+    (faceImage instanceof HTMLImageElement && faceImage.complete && faceImage.naturalWidth > 0)
+  );
+  if (faceReady) {
+    ctx.save(); ctx.beginPath(); ctx.rect(9, headY, 14, 12); ctx.clip(); try { ctx.drawImage(faceImage!, 9, headY, 14, 12); } catch (e) {} ctx.restore(); ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 1; ctx.strokeRect(9.5, headY+0.5, 13, 11);
   } else {
     if (dir === 'down' || dir === 'right' || dir === 'left') {
         const eyeY = headY + 4; const mouthY = headY + 9;
@@ -99,7 +104,7 @@ export const drawHumanSprite = (ctx: CanvasRenderingContext2D, config: AvatarCon
   ctx.restore();
 };
 
-export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, otherUsers, onInteract, localVideoRef, remoteVideoRefs, backgroundImage, interactiveObjects = [], onUpdateObject, onDeleteObject, floatingEmojis = [], zoomLevel, onZoomChange }) => {
+export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, otherUsers, onInteract, localVideoRef, remoteVideoRefs, remoteCamFrames, backgroundImage, interactiveObjects = [], onUpdateObject, onDeleteObject, floatingEmojis = [], zoomLevel, onZoomChange }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const objectsLayerRef = useRef<HTMLDivElement>(null);
@@ -225,10 +230,12 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, othe
       const cy = renderY * TILE_SIZE + TILE_SIZE; 
       ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.beginPath(); ctx.ellipse(cx, cy - 4, TILE_SIZE/3, TILE_SIZE/6, 0, 0, Math.PI*2); ctx.fill(); 
       ctx.save(); ctx.translate(cx - 16, cy - 32); 
-      let videoSource = null; 
+      let videoSource: HTMLVideoElement | HTMLImageElement | null = null; 
       if (u.isCameraOn) { 
         if (u.id === currentUser.id && localVideoRef.current) {
           videoSource = localVideoRef.current; 
+        } else if (remoteCamFrames.current[u.id]) {
+          videoSource = remoteCamFrames.current[u.id];
         } else if (remoteVideoRefs.current && remoteVideoRefs.current[u.id]) {
           videoSource = remoteVideoRefs.current[u.id];
         }
