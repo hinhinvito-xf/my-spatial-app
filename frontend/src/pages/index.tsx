@@ -57,7 +57,7 @@ const AvatarPreview: React.FC<{config:AvatarConfig}> = ({config}) => {
     ctx.clearRect(0,0,canvas.width,canvas.height);
     ctx.imageSmoothingEnabled = false;
     ctx.save();
-    ctx.translate(60,50);
+    ctx.translate(27,24);
     drawHumanSprite(ctx, config, previewDir, true, 3);
     ctx.restore();
   }, [config, previewDir]);
@@ -102,6 +102,16 @@ const GamePage = () => {
   const [isConnected, setIsConnected] = useState(false);
   const [backgroundImage, setBackgroundImage] = useState<string | null>(null);
   const [interactiveObjects, setInteractiveObjects] = useState<InteractiveObject[]>([]);
+  const [floatingEmojis, setFloatingEmojis] = useState<{ id: string, text: string, x: number, y: number, timestamp: number }[]>([]);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const EMOJI_LIST = ['👍', '👋', '😂', '❤️', '🔥', '🎉'];
+
+  const sendEmoji = (emoji: string) => {
+    const newEmoji = { id: uuidv4(), text: emoji, x, y, timestamp: Date.now() };
+    setFloatingEmojis(prev => [...prev, newEmoji]);
+    if (channel) channel.send({ type: 'broadcast', event: 'emoji', payload: newEmoji });
+    setShowEmojiPicker(false);
+  };
   
   // Realtime Supabase
   const [channel, setChannel] = useState<RealtimeChannel | null>(null);
@@ -223,6 +233,7 @@ const GamePage = () => {
       .on('broadcast', { event: 'admin_add_object' }, ({ payload }) => setInteractiveObjects(prev => [...prev, payload]))
       .on('broadcast', { event: 'admin_update_object' }, ({ payload }) => setInteractiveObjects(prev => prev.map(o => o.id === payload.id ? payload : o)))
       .on('broadcast', { event: 'admin_delete_object' }, ({ payload }) => setInteractiveObjects(prev => payload.id === 'ALL' ? [] : prev.filter(o => o.id !== payload.id)))
+      .on('broadcast', { event: 'emoji' }, ({ payload }) => setFloatingEmojis(prev => [...prev, payload]))
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           setIsConnected(true);
@@ -261,7 +272,7 @@ const GamePage = () => {
             <AvatarPreview config={avatar} /> 
           </div> 
           
-          <div className="w-full md:w-2/3 flex flex-col"> 
+          <div className="w-full md:w-2/3 flex flex-col min-h-0"> 
             <h1 className="text-3xl font-bold mb-2 bg-gradient-to-br from-white to-white/50 bg-clip-text text-transparent">{t.title}</h1> 
             <p className="text-white/40 text-sm mb-8">{t.subtitle}</p> 
             <div className="flex-1 overflow-y-auto pr-4 custom-scrollbar space-y-6"> 
@@ -313,11 +324,12 @@ const GamePage = () => {
         interactiveObjects={interactiveObjects} 
         onUpdateObject={handleUpdateObject}
         onDeleteObject={handleDeleteObject}
+        floatingEmojis={floatingEmojis}
       />
       
       {/* GLASSSMORPHISM HUD TOP LEFT */}
-      <div className="absolute top-6 left-6 text-white bg-white/5 p-5 rounded-2xl backdrop-blur-xl shadow-2xl border border-white/10 select-none pointer-events-none min-w-[200px]"> 
-        <div className="flex items-center gap-3 mb-4 pb-4 border-b border-white/5"> 
+      <div className="absolute top-6 left-6 text-white bg-[#0f172a]/90 p-5 rounded-2xl backdrop-blur-xl shadow-2xl border border-white/20 select-none pointer-events-none min-w-[200px]"> 
+        <div className="flex items-center gap-3 mb-4 pb-4 border-b border-white/10"> 
           <div className={`w-2.5 h-2.5 rounded-full shadow-[0_0_10px_currentColor] transition-colors duration-500 ${isConnected ? 'bg-emerald-400 text-emerald-400' : 'bg-rose-400 text-rose-400'}`}></div> 
           <span className="font-bold tracking-widest text-xs uppercase text-white/80">{isConnected ? t.online : t.offline}</span> 
         </div> 
@@ -328,7 +340,7 @@ const GamePage = () => {
       </div>
       
       {/* GLASSMORPHISM MAIN DOCK BOTTOM */}
-      <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 flex items-center gap-2 bg-white/5 backdrop-blur-xl px-4 py-3 rounded-2xl shadow-[0_20px_40px_rgba(0,0,0,0.4)] z-50 border border-white/10 h-[72px]">
+      <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 flex items-center gap-2 bg-[#0f172a]/90 backdrop-blur-xl px-4 py-3 rounded-2xl shadow-[0_20px_40px_rgba(0,0,0,0.6)] z-50 border border-white/20 h-[72px]">
         
         {/* Profile */}
         <div className="relative group cursor-pointer mr-2 border border-white/10 rounded-xl overflow-hidden hover:border-white/30 transition-colors">
@@ -354,7 +366,17 @@ const GamePage = () => {
 
         {/* General Tools */}
         <button className="w-12 h-12 flex items-center justify-center rounded-xl bg-white/5 hover:bg-white/10 text-white/50 hover:text-white transition-all duration-300"><Icons.Monitor /></button>
-        <button className="w-12 h-12 flex items-center justify-center rounded-xl bg-white/5 hover:bg-white/10 text-white/50 hover:text-white transition-all duration-300"><Icons.Smile /></button>
+        
+        <div className="relative">
+          <button onClick={() => setShowEmojiPicker(!showEmojiPicker)} className={`w-12 h-12 flex items-center justify-center rounded-xl transition-all duration-300 ${showEmojiPicker ? 'bg-white/20 text-white shadow-inner' : 'bg-white/5 hover:bg-white/10 text-white/50 hover:text-white'}`}>
+            <Icons.Smile />
+          </button>
+          {showEmojiPicker && (
+            <div className="absolute bottom-[calc(100%+16px)] left-1/2 transform -translate-x-1/2 bg-[#111827]/90 backdrop-blur-md px-3 py-2 border border-white/10 rounded-xl flex gap-2 shadow-[0_10px_20px_rgba(0,0,0,0.5)] animate-fade-in-up origin-bottom">
+              {EMOJI_LIST.map(e => <button key={e} onClick={() => sendEmoji(e)} className="text-xl hover:scale-125 transition-transform">{e}</button>)}
+            </div>
+          )}
+        </div>
 
         {/* Admin Tools */}
         {username === 'AdminXiangFei123' && ( 

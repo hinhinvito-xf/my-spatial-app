@@ -18,6 +18,14 @@ export interface InteractiveObject {
   src: string;
 }
 
+export interface FloatingEmoji {
+  id: string;
+  text: string;
+  x: number;
+  y: number;
+  timestamp: number;
+}
+
 interface MapCanvasProps {
   mapData: MapData | null; 
   currentUser: User; 
@@ -29,6 +37,7 @@ interface MapCanvasProps {
   interactiveObjects?: InteractiveObject[];
   onUpdateObject?: (obj: InteractiveObject) => void;
   onDeleteObject?: (id: string) => void; // NEW PROP
+  floatingEmojis?: FloatingEmoji[];
 }
 
 const TILE_SIZE = 48;
@@ -88,7 +97,7 @@ export const drawHumanSprite = (ctx: CanvasRenderingContext2D, config: AvatarCon
   ctx.restore();
 };
 
-export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, otherUsers, onInteract, localVideo, remoteVideos, backgroundImage, interactiveObjects = [], onUpdateObject, onDeleteObject }) => {
+export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, otherUsers, onInteract, localVideo, remoteVideos, backgroundImage, interactiveObjects = [], onUpdateObject, onDeleteObject, floatingEmojis = [] }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const objectsLayerRef = useRef<HTMLDivElement>(null);
@@ -189,6 +198,19 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, othe
 
     const visibleUsers = [...otherUsers, currentUser].filter(u => u.x >= startCol - 2 && u.x <= endCol + 2 && u.y >= startRow - 2 && u.y <= endRow + 2).sort((a, b) => a.y - b.y);
     visibleUsers.forEach(u => { const cx = u.x * TILE_SIZE + TILE_SIZE/2; const cy = u.y * TILE_SIZE + TILE_SIZE; ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.beginPath(); ctx.ellipse(cx, cy - 4, TILE_SIZE/3, TILE_SIZE/6, 0, 0, Math.PI*2); ctx.fill(); ctx.save(); ctx.translate(cx - 16, cy - 32); let videoSource = null; if (u.isCameraOn) { if (u.id === currentUser.id) videoSource = localVideo; else if (remoteVideos && remoteVideos[u.id]) videoSource = remoteVideos[u.id]; } drawHumanSprite(ctx, u.avatarConfig, u.direction, true, 1.0, videoSource); ctx.restore(); ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'center'; const w = ctx.measureText(u.displayName).width + 12; ctx.fillRect(cx - w/2, cy - 45, w, 16); ctx.fillStyle = '#fff'; ctx.fillText(u.displayName, cx, cy - 34); });
+
+    floatingEmojis?.forEach(e => {
+        const cx = e.x * TILE_SIZE + TILE_SIZE/2;
+        const cy = e.y * TILE_SIZE + TILE_SIZE/2;
+        const elapsed = Date.now() - e.timestamp;
+        if (elapsed > 3000) return;
+        const upOffset = (elapsed / 3000) * 40;
+        ctx.font = '32px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.globalAlpha = 1 - (elapsed / 3000);
+        ctx.fillText(e.text, cx, cy - 40 - upOffset);
+        ctx.globalAlpha = 1;
+    });
 
     ctx.restore();
     requestAnimationFrame(render);
