@@ -192,7 +192,7 @@ const GamePage = () => {
   const getStream = async () => {
     if (localStream) return localStream;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { min: 640 }, height: { min: 480 } }, audio: true });
       stream.getVideoTracks().forEach(t => t.enabled = false);
       stream.getAudioTracks().forEach(t => t.enabled = false);
       setLocalStream(stream);
