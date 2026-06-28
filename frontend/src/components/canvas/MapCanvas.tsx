@@ -67,6 +67,7 @@ export const drawHumanSprite = (ctx: CanvasRenderingContext2D, config: AvatarCon
   else { rect(c.shirt, 14, bodyY + 2, 4, 8); }
   const headY = 2 + bob;
   ctx.save();
+  ctx.translate(0, -16);
   ctx.translate(16, headY + 6);
   ctx.scale(3, 3);
   ctx.translate(-16, -(headY + 6));
@@ -252,8 +253,8 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, othe
       drawHumanSprite(ctx, u.avatarConfig, u.direction, true, 1.0, videoSource); 
       ctx.restore(); 
       ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'center'; 
-      const w = ctx.measureText(u.displayName).width + 12; ctx.fillRect(cx - w/2, cy - 45, w, 16); 
-      ctx.fillStyle = '#fff'; ctx.fillText(u.displayName, cx, cy - 34); 
+      const w = ctx.measureText(u.displayName).width + 12; ctx.fillRect(cx - w/2, cy - 80, w, 16); 
+      ctx.fillStyle = '#fff'; ctx.fillText(u.displayName, cx, cy - 69); 
     });
 
     floatingEmojis?.forEach(e => {
@@ -265,7 +266,7 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, othe
         ctx.font = '32px sans-serif';
         ctx.textAlign = 'center';
         ctx.globalAlpha = 1 - (elapsed / 3000);
-        ctx.fillText(e.text, cx, cy - 40 - upOffset);
+        ctx.fillText(e.text, cx, cy - 60 - upOffset);
         ctx.globalAlpha = 1;
     });
 
