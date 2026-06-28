@@ -66,7 +66,11 @@ export const drawHumanSprite = (ctx: CanvasRenderingContext2D, config: AvatarCon
   else if (dir === 'up') { rect(c.shirt, 6, bodyY, 3, 8); rect(c.shirt, 23, bodyY, 3, 8); } 
   else { rect(c.shirt, 14, bodyY + 2, 4, 8); }
   const headY = 2 + bob;
-  rect(c.skin, 9, headY, 14, 12); 
+  ctx.save();
+  ctx.translate(16, headY + 6);
+  ctx.scale(3, 3);
+  ctx.translate(-16, -(headY + 6));
+  rect(c.skin, 9, headY, 14, 12);
   const faceReady = faceImage && dir === 'down' && (
     (faceImage instanceof HTMLVideoElement && faceImage.readyState >= 2) ||
     (faceImage instanceof HTMLImageElement && faceImage.complete && faceImage.naturalWidth > 0)
@@ -101,6 +105,7 @@ export const drawHumanSprite = (ctx: CanvasRenderingContext2D, config: AvatarCon
     else if (c.hat === 'cowboy') { rect('#78350f', 6, hatY + 2, 20, 2); rect('#78350f', 10, hatY - 4, 12, 6); } 
     else if (c.hat === 'helmet') { rect('#94a3b8', 8, headY - 2, 16, 14); rect('#333', 12, headY + 4, 8, 2); }
   }
+  ctx.restore();
   ctx.restore();
 };
 

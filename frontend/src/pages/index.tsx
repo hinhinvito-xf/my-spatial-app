@@ -154,15 +154,15 @@ const GamePage = () => {
     if (!isCameraOn || !channel || !localVideoRef.current) return;
     
     const thumbCanvas = document.createElement('canvas');
-    thumbCanvas.width = 28;
-    thumbCanvas.height = 24;
+    thumbCanvas.width = 168;
+    thumbCanvas.height = 144;
     const thumbCtx = thumbCanvas.getContext('2d')!;
     
     const interval = setInterval(() => {
       const video = localVideoRef.current;
       if (video && video.readyState >= 2) {
-        thumbCtx.drawImage(video, 0, 0, 28, 24);
-        const dataUrl = thumbCanvas.toDataURL('image/jpeg', 0.4);
+        thumbCtx.drawImage(video, 0, 0, 168, 144);
+        const dataUrl = thumbCanvas.toDataURL('image/jpeg', 0.8);
         channel.send({
           type: 'broadcast',
           event: 'cam_frame',
