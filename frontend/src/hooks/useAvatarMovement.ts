@@ -11,7 +11,8 @@ interface MapData {
 export const useAvatarMovement = (
   initialX: number, 
   initialY: number, 
-  mapData: MapData | null
+  mapData: MapData | null,
+  otherUsers: { x: number, y: number }[] = []
 ) => {
   const [position, setPosition] = useState({ x: initialX, y: initialY });
   const [direction, setDirection] = useState<Direction>('down');
@@ -19,8 +20,10 @@ export const useAvatarMovement = (
   const isWalkable = useCallback((x: number, y: number) => {
     if (!mapData) return false;
     if (x < 0 || y < 0 || x >= mapData.width || y >= mapData.height) return false;
-    return mapData.tiles[y][x] === 0;
-  }, [mapData]);
+    if (mapData.tiles[y][x] !== 0) return false;
+    if (otherUsers.some(u => Math.round(u.x) === x && Math.round(u.y) === y)) return false;
+    return true;
+  }, [mapData, otherUsers]);
 
   const move = useCallback((dx: number, dy: number, newDir: Direction) => {
     setDirection(newDir); // Always update facing direction

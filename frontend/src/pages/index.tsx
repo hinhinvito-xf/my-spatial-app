@@ -105,9 +105,8 @@ const GamePage = () => {
 
   const mapData = useMemo(() => generateCityMap(MAP_SIZE), []);
   const initialSpawn = useMemo(() => getRandomSpawn(mapData), [mapData]);
-  const { x, y, direction } = useAvatarMovement(initialSpawn.x, initialSpawn.y, mapData);
-  
   const [otherUsers, setOtherUsers] = useState<User[]>([]);
+  const { x, y, direction } = useAvatarMovement(initialSpawn.x, initialSpawn.y, mapData, otherUsers);
   const [isConnected, setIsConnected] = useState(false);
   const [backgroundImage, setBackgroundImage] = useState<string | null>(null);
   const [interactiveObjects, setInteractiveObjects] = useState<InteractiveObject[]>([]);
