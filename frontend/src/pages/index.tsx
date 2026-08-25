@@ -86,6 +86,81 @@ const generateCityMap = (size:number):MapData => {
 
 const getRandomSpawn = (map:MapData) => ({ x: 20, y: 20 });
 
+type UserRole = 'visitor' | 'staff' | 'admin';
+type TilePaintMode = 'wall' | 'floor';
+
+interface StaffCriteria {
+  nameContains: string;
+  password: string;
+}
+
+const ADMIN_NAME = 'admin';
+const ADMIN_PASSWORD = 'xf123';
+const DEFAULT_STAFF_CRITERIA: StaffCriteria = { nameContains: 'staff', password: 'staff123' };
+const STAFF_CRITERIA_STORAGE_KEY = 'spatial_staff_criteria';
+const MAP_LAYOUT_STORAGE_KEY = 'spatial_map_layout';
+
+const loadStaffCriteria = (): StaffCriteria => {
+  if (typeof window === 'undefined') return DEFAULT_STAFF_CRITERIA;
+
+  try {
+    const stored = window.localStorage.getItem(STAFF_CRITERIA_STORAGE_KEY);
+    if (!stored) return DEFAULT_STAFF_CRITERIA;
+    const parsed = JSON.parse(stored) as Partial<StaffCriteria>;
+    return {
+      nameContains: parsed.nameContains || DEFAULT_STAFF_CRITERIA.nameContains,
+      password: parsed.password || DEFAULT_STAFF_CRITERIA.password,
+    };
+  } catch {
+    return DEFAULT_STAFF_CRITERIA;
+  }
+};
+
+const saveStaffCriteria = (criteria: StaffCriteria) => {
+  if (typeof window !== 'undefined') {
+    window.localStorage.setItem(STAFF_CRITERIA_STORAGE_KEY, JSON.stringify(criteria));
+  }
+};
+
+const loadMapLayout = (): MapData => {
+  const fallback = generateCityMap(MAP_SIZE);
+  if (typeof window === 'undefined') return fallback;
+
+  try {
+    const stored = window.localStorage.getItem(MAP_LAYOUT_STORAGE_KEY);
+    if (!stored) return fallback;
+    const parsed = JSON.parse(stored) as MapData;
+    if (parsed.width !== MAP_SIZE || parsed.height !== MAP_SIZE || parsed.tiles.length !== MAP_SIZE) return fallback;
+    return parsed;
+  } catch {
+    return fallback;
+  }
+};
+
+const saveMapLayout = (mapData: MapData) => {
+  if (typeof window !== 'undefined') {
+    window.localStorage.setItem(MAP_LAYOUT_STORAGE_KEY, JSON.stringify(mapData));
+  }
+};
+
+const applyTileUpdate = (mapData: MapData, tileX: number, tileY: number, tileType: 0 | 1): MapData => {
+  if (tileX < 0 || tileY < 0 || tileX >= mapData.width || tileY >= mapData.height) return mapData;
+  if (mapData.tiles[tileY][tileX] === tileType) return mapData;
+
+  const tiles = mapData.tiles.map((row, y) => (
+    y === tileY ? row.map((tile, x) => (x === tileX ? tileType : tile)) : row
+  ));
+  return { ...mapData, tiles };
+};
+
+const getUploadedMediaType = (file: File): InteractiveObject['type'] => {
+  const lowerName = file.name.toLowerCase();
+  if (file.type.startsWith('image/')) return 'image';
+  if (file.type.startsWith('video/')) return 'video';
+  if (file.type === 'application/pdf' || lowerName.endsWith('.pdf')) return 'iframe';
+  return 'document';
+};
+
 const GamePage = () => {
   const [userId] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -98,12 +173,21 @@ const GamePage = () => {
     return uuidv4();
   });
   const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [role, setRole] = useState<UserRole>('visitor');
   const [isGameStarted, setIsGameStarted] = useState(false);
   const [language, setLanguage] = useState<Language>('en');
   const t = (key: any) => getTranslation(language, key);
   const [avatar, setAvatar] = useState<AvatarConfig>({ skin: '#fca5a5', hair: 'short', hat: 'none', face: 'smile', shirt: '#3b82f6', pants: '#000', shoes: '#000' });
 
-  const mapData = useMemo(() => generateCityMap(MAP_SIZE), []);
+  const [mapData, setMapData] = useState<MapData>(() => loadMapLayout());
+  const mapDataRef = useRef<MapData>(mapData);
+  const [layoutEditMode, setLayoutEditMode] = useState(false);
+  const [tilePaintMode, setTilePaintMode] = useState<TilePaintMode>('wall');
+  const [staffCriteria, setStaffCriteria] = useState<StaffCriteria>(() => loadStaffCriteria());
+  const [staffCriteriaForm, setStaffCriteriaForm] = useState<StaffCriteria>(() => loadStaffCriteria());
+  const [adminNotice, setAdminNotice] = useState<string | null>(null);
   const initialSpawn = useMemo(() => getRandomSpawn(mapData), [mapData]);
   const [otherUsers, setOtherUsers] = useState<User[]>([]);
   const { x, y, direction } = useAvatarMovement(initialSpawn.x, initialSpawn.y, mapData, otherUsers);
@@ -182,11 +266,95 @@ const GamePage = () => {
   }, [isCameraOn, channel, userId]);
 
   const [showAddMenu, setShowAddMenu] = useState(false);
-  const [activeModal, setActiveModal] = useState<'video'|'iframe'|'image'|null>(null);
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [activeModal, setActiveModal] = useState<InteractiveObject['type'] | null>(null);
   const [modalInput, setModalInput] = useState("");
   const objectFileInputRef = useRef<HTMLInputElement>(null); 
   const fileInputRef = useRef<HTMLInputElement>(null); 
-  const isAdmin = username === 'AdminXiangFei123';
+  const isAdmin = role === 'admin';
+
+  useEffect(() => {
+    mapDataRef.current = mapData;
+    saveMapLayout(mapData);
+  }, [mapData]);
+
+  useEffect(() => {
+    saveStaffCriteria(staffCriteria);
+    setStaffCriteriaForm(staffCriteria);
+  }, [staffCriteria]);
+
+  const sendAdminBroadcast = useCallback((event: string, payload: unknown) => {
+    activeChannelRef.current?.send({ type: 'broadcast', event, payload }).catch(() => {});
+  }, []);
+
+  const handleJoinWorld = () => {
+    const trimmedName = username.trim();
+    if (!trimmedName) return;
+
+    if (trimmedName.toLowerCase() === ADMIN_NAME) {
+      if (password === ADMIN_PASSWORD) {
+        setUsername(ADMIN_NAME);
+        setRole('admin');
+        setAuthError(null);
+        setIsGameStarted(true);
+        return;
+      }
+      setAuthError('Admin password is incorrect.');
+      return;
+    }
+
+    if (password) {
+      const requiredName = staffCriteria.nameContains.trim().toLowerCase();
+      const isStaffName = requiredName.length > 0 && trimmedName.toLowerCase().includes(requiredName);
+      if (isStaffName && password === staffCriteria.password) {
+        setUsername(trimmedName);
+        setRole('staff');
+        setAuthError(null);
+        setIsGameStarted(true);
+        return;
+      }
+
+      setAuthError('Staff name or password does not match the current criteria.');
+      return;
+    }
+
+    setUsername(trimmedName);
+    setRole('visitor');
+    setAuthError(null);
+    setIsGameStarted(true);
+  };
+
+  const handleSaveStaffCriteria = () => {
+    const nextCriteria = {
+      nameContains: staffCriteriaForm.nameContains.trim(),
+      password: staffCriteriaForm.password.trim(),
+    };
+
+    if (!nextCriteria.nameContains || !nextCriteria.password) {
+      setAdminNotice('Staff criteria needs both a name string and password.');
+      return;
+    }
+
+    setStaffCriteria(nextCriteria);
+    sendAdminBroadcast('admin_update_staff_criteria', nextCriteria);
+    setAdminNotice('Staff criteria saved.');
+  };
+
+  const handlePaintMapTile = useCallback((tileX: number, tileY: number, tileType: 0 | 1) => {
+    const next = applyTileUpdate(mapDataRef.current, tileX, tileY, tileType);
+    if (next === mapDataRef.current) return;
+    mapDataRef.current = next;
+    setMapData(next);
+    sendAdminBroadcast('admin_update_tile', { x: tileX, y: tileY, tileType });
+  }, [sendAdminBroadcast]);
+
+  const handleResetMapLayout = () => {
+    const nextMap = generateCityMap(MAP_SIZE);
+    mapDataRef.current = nextMap;
+    setMapData(nextMap);
+    sendAdminBroadcast('admin_replace_map_layout', nextMap);
+    setAdminNotice('Map layout reset.');
+  };
 
   const getStream = async () => {
     if (localStream) return localStream;
@@ -230,27 +398,72 @@ const GamePage = () => {
     const file = e.target.files?.[0];
     if (!file) return;
     const fileName = `${userId}_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.\-_]/g, '')}`;
-    const { data, error } = await supabase.storage.from('spatial_media').upload(`objects/${fileName}`, file, { cacheControl: '3600', upsert: false });
-    
     let url = URL.createObjectURL(file);
-    if (!error && data) url = supabase.storage.from('spatial_media').getPublicUrl(`objects/${fileName}`).data.publicUrl;
-    let type: 'image' | 'video' | 'iframe' = 'iframe';
-    if (file.type.startsWith('image/')) type = 'image';
-    else if (file.type.startsWith('video/')) type = 'video';
-    else if (file.type === 'application/pdf') type = 'iframe';
+    try {
+      const { data, error } = await supabase.storage.from('spatial_media').upload(`objects/${fileName}`, file, { cacheControl: '3600', upsert: false });
+      if (!error && data) url = supabase.storage.from('spatial_media').getPublicUrl(`objects/${fileName}`).data.publicUrl;
+    } catch {
+      setAdminNotice('Using local preview URL because storage upload is unavailable.');
+    }
 
-    const newObj: InteractiveObject = { id: uuidv4(), type, x, y: y-4, width: 6, height: 4, src: url };
+    const type = getUploadedMediaType(file);
+    const newObj: InteractiveObject = { id: uuidv4(), type, x, y: y-4, width: 6, height: 4, src: url, title: file.name };
     setInteractiveObjects(prev => [...prev, newObj]);
-    if (channel) activeChannelRef.current?.send({ type: 'broadcast', event: 'admin_add_object', payload: newObj });
+    sendAdminBroadcast('admin_add_object', newObj);
     e.target.value = '';
     setShowAddMenu(false);
   };
 
-  const handleClearBackground = () => { setBackgroundImage(null); if (channel) activeChannelRef.current?.send({ type: 'broadcast', event: 'admin_clear_background' }); };
-  const handleBackgroundUpload = async (e: React.ChangeEvent<HTMLInputElement>) => { const file = e.target.files?.[0]; if (!file) return; setBackgroundImage(URL.createObjectURL(file)); const fn = `bg_${Date.now()}_${file.name}`; const {data, error} = await supabase.storage.from('spatial_media').upload(`bg/${fn}`, file); const bgUrl = !error && data ? supabase.storage.from('spatial_media').getPublicUrl(`bg/${fn}`).data.publicUrl : URL.createObjectURL(file);    if (channel) activeChannelRef.current?.send({ type: 'broadcast', event: 'admin_upload_background', payload: { image: bgUrl } }); };
-  const handleAddObject = (type: 'video'|'iframe'|'image', src: string) => { const newObj: InteractiveObject = { id: uuidv4(), type, x, y: y-4, width: 6, height: 4, src }; setInteractiveObjects(prev => [...prev, newObj]); if (channel) activeChannelRef.current?.send({ type: 'broadcast', event: 'admin_add_object', payload: newObj }); setActiveModal(null); setModalInput(""); };
-  const handleDeleteObject = (id: string) => { setInteractiveObjects(prev => prev.filter(o => o.id !== id));    if (channel) activeChannelRef.current?.send({ type: 'broadcast', event: 'admin_delete_object', payload: { id } }); };
-  const handleUpdateObject = (updatedObj: InteractiveObject) => { setInteractiveObjects(prev => prev.map(o => o.id === updatedObj.id ? updatedObj : o));    if (channel) activeChannelRef.current?.send({ type: 'broadcast', event: 'admin_update_object', payload: updatedObj }); };
+  const handleClearBackground = () => {
+    setBackgroundImage(null);
+    sendAdminBroadcast('admin_clear_background', {});
+  };
+
+  const handleBackgroundUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const localUrl = URL.createObjectURL(file);
+    setBackgroundImage(localUrl);
+
+    const fileName = `bg_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.\-_]/g, '')}`;
+    let bgUrl = localUrl;
+    try {
+      const { data, error } = await supabase.storage.from('spatial_media').upload(`bg/${fileName}`, file);
+      if (!error && data) bgUrl = supabase.storage.from('spatial_media').getPublicUrl(`bg/${fileName}`).data.publicUrl;
+    } catch {
+      setAdminNotice('Using local background preview because storage upload is unavailable.');
+    }
+
+    setBackgroundImage(bgUrl);
+    sendAdminBroadcast('admin_upload_background', { image: bgUrl });
+    e.target.value = '';
+  };
+
+  const handleAddObject = (type: InteractiveObject['type'], src: string) => {
+    const trimmedSrc = src.trim();
+    if (!trimmedSrc) return;
+    const newObj: InteractiveObject = { id: uuidv4(), type, x, y: y-4, width: 6, height: 4, src: trimmedSrc };
+    setInteractiveObjects(prev => [...prev, newObj]);
+    sendAdminBroadcast('admin_add_object', newObj);
+    setActiveModal(null);
+    setModalInput("");
+  };
+
+  const handleDeleteObject = (id: string) => {
+    setInteractiveObjects(prev => prev.filter(o => o.id !== id));
+    sendAdminBroadcast('admin_delete_object', { id });
+  };
+
+  const handleDeleteAllObjects = () => {
+    setInteractiveObjects([]);
+    sendAdminBroadcast('admin_delete_object', { id: 'ALL' });
+    setShowAddMenu(false);
+  };
+
+  const handleUpdateObject = (updatedObj: InteractiveObject) => {
+    setInteractiveObjects(prev => prev.map(o => o.id === updatedObj.id ? updatedObj : o));
+    sendAdminBroadcast('admin_update_object', updatedObj);
+  };
 
   useEffect(() => {
     if (!isGameStarted) return;
@@ -287,6 +500,11 @@ const GamePage = () => {
       .on('broadcast', { event: 'admin_add_object' }, ({ payload }) => setInteractiveObjects(prev => [...prev, payload]))
       .on('broadcast', { event: 'admin_update_object' }, ({ payload }) => setInteractiveObjects(prev => prev.map(o => o.id === payload.id ? payload : o)))
       .on('broadcast', { event: 'admin_delete_object' }, ({ payload }) => setInteractiveObjects(prev => payload.id === 'ALL' ? [] : prev.filter(o => o.id !== payload.id)))
+      .on('broadcast', { event: 'admin_upload_background' }, ({ payload }) => setBackgroundImage(payload.image))
+      .on('broadcast', { event: 'admin_clear_background' }, () => setBackgroundImage(null))
+      .on('broadcast', { event: 'admin_update_tile' }, ({ payload }) => setMapData(prev => applyTileUpdate(prev, payload.x, payload.y, payload.tileType)))
+      .on('broadcast', { event: 'admin_replace_map_layout' }, ({ payload }) => setMapData(payload as MapData))
+      .on('broadcast', { event: 'admin_update_staff_criteria' }, ({ payload }) => setStaffCriteria(payload as StaffCriteria))
       .on('broadcast', { event: 'emoji' }, ({ payload }) => setFloatingEmojis(prev => [...prev, { ...payload, timestamp: Date.now() }]))
       .on('broadcast', { event: 'cam_frame' }, ({ payload }) => {
         if (payload.userId === userId) return;
@@ -375,8 +593,10 @@ const GamePage = () => {
               ))} 
             </div> 
             <div className="mt-8 pt-6 border-t border-white/10"> 
-              <input type="text" className="w-full p-4 rounded-xl bg-black/50 border border-white/10 focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 outline-none text-white placeholder-white/30 mb-4 transition-all text-sm" placeholder={t('placeholder')} value={username} onChange={e=>setUsername(e.target.value)} /> 
-              <button disabled={!username} onClick={()=>setIsGameStarted(true)} className="w-full bg-blue-600 py-4 rounded-xl font-bold text-white shadow-[0_0_20px_rgba(37,99,235,0.3)] hover:bg-blue-500 hover:shadow-[0_0_25px_rgba(37,99,235,0.5)] active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm uppercase tracking-wider"> {t('join')} </button> 
+              <input type="text" className="w-full p-4 rounded-xl bg-black/50 border border-white/10 focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 outline-none text-white placeholder-white/30 mb-3 transition-all text-sm" placeholder={t('placeholder')} value={username} onChange={e=>{ setUsername(e.target.value); setAuthError(null); }} onKeyDown={e => { if (e.key === 'Enter') handleJoinWorld(); }} /> 
+              <input type="password" className="w-full p-4 rounded-xl bg-black/50 border border-white/10 focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 outline-none text-white placeholder-white/30 mb-3 transition-all text-sm" placeholder="Password for admin/staff" value={password} onChange={e=>{ setPassword(e.target.value); setAuthError(null); }} onKeyDown={e => { if (e.key === 'Enter') handleJoinWorld(); }} /> 
+              {authError && <div className="mb-3 rounded-xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">{authError}</div>}
+              <button disabled={!username.trim()} onClick={handleJoinWorld} className="w-full bg-blue-600 py-4 rounded-xl font-bold text-white shadow-[0_0_20px_rgba(37,99,235,0.3)] hover:bg-blue-500 hover:shadow-[0_0_25px_rgba(37,99,235,0.5)] active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm uppercase tracking-wider"> {t('join')} </button> 
             </div> 
           </div> 
         </div> 
@@ -400,6 +620,10 @@ const GamePage = () => {
         floatingEmojis={floatingEmojis}
         zoomLevel={zoomLevel}
         onZoomChange={setZoomLevel}
+        canAdminEdit={isAdmin}
+        layoutEditMode={layoutEditMode}
+        tilePaintMode={tilePaintMode}
+        onPaintTile={handlePaintMapTile}
       />
       
       <div className="absolute top-6 left-6 text-white bg-[#0f172a]/90 p-5 rounded-2xl backdrop-blur-xl shadow-2xl border border-white/20 select-none pointer-events-none min-w-[200px]"> 
@@ -414,9 +638,72 @@ const GamePage = () => {
       </div>
       
       {isAdmin && (
-        <button onClick={() => setShowAddMenu(true)} className="absolute top-6 right-6 bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 px-4 rounded-xl shadow-lg border border-purple-400 transition-all z-50 text-sm flex gap-2 items-center">
+        <button onClick={() => setShowAdminPanel(true)} className="absolute top-6 right-6 bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 px-4 rounded-xl shadow-lg border border-purple-400 transition-all z-50 text-sm flex gap-2 items-center">
           {t('adminTools')}
         </button>
+      )}
+
+      {isAdmin && showAdminPanel && (
+        <div className="absolute top-20 right-6 z-[90] w-[360px] max-w-[calc(100vw-48px)] rounded-2xl border border-white/15 bg-[#0f172a]/95 p-5 text-white shadow-2xl backdrop-blur-xl">
+          <div className="mb-5 flex items-center justify-between">
+            <h2 className="text-sm font-bold uppercase tracking-widest text-white/80">Admin Panel</h2>
+            <button onClick={() => setShowAdminPanel(false)} className="rounded-full bg-white/5 p-2 text-white/50 hover:bg-white/10 hover:text-white">
+              <Icons.Close />
+            </button>
+          </div>
+
+          <div className="space-y-5">
+            <div className="border-b border-white/10 pb-5">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <span className="text-xs font-bold uppercase tracking-widest text-white/50">Map Layout</span>
+                <button
+                  onClick={() => setLayoutEditMode(prev => !prev)}
+                  className={`rounded-lg px-3 py-2 text-xs font-bold uppercase tracking-wide ${layoutEditMode ? 'bg-blue-500 text-white' : 'bg-white/5 text-white/70 hover:bg-white/10'}`}
+                >
+                  {layoutEditMode ? 'Editing' : 'Edit'}
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button onClick={() => setTilePaintMode('wall')} className={`rounded-lg px-3 py-2 text-sm font-semibold ${tilePaintMode === 'wall' ? 'bg-black text-white ring-1 ring-blue-400' : 'bg-white/5 text-white/70 hover:bg-white/10'}`}>Black</button>
+                <button onClick={() => setTilePaintMode('floor')} className={`rounded-lg px-3 py-2 text-sm font-semibold ${tilePaintMode === 'floor' ? 'bg-slate-100 text-slate-900 ring-1 ring-blue-400' : 'bg-white/5 text-white/70 hover:bg-white/10'}`}>Walk</button>
+              </div>
+              <button onClick={handleResetMapLayout} className="mt-2 w-full rounded-lg bg-white/5 px-3 py-2 text-sm font-semibold text-white/70 hover:bg-white/10">Reset Walls</button>
+            </div>
+
+            <div className="border-b border-white/10 pb-5">
+              <div className="mb-3 text-xs font-bold uppercase tracking-widest text-white/50">Staff Access</div>
+              <input
+                className="mb-2 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none focus:border-blue-400"
+                placeholder="Name contains"
+                value={staffCriteriaForm.nameContains}
+                onChange={e => setStaffCriteriaForm(prev => ({ ...prev, nameContains: e.target.value }))}
+              />
+              <input
+                className="mb-3 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none focus:border-blue-400"
+                placeholder="Staff password"
+                type="password"
+                value={staffCriteriaForm.password}
+                onChange={e => setStaffCriteriaForm(prev => ({ ...prev, password: e.target.value }))}
+              />
+              <button onClick={handleSaveStaffCriteria} className="w-full rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold hover:bg-blue-500">Save Criteria</button>
+            </div>
+
+            <div>
+              <div className="mb-3 text-xs font-bold uppercase tracking-widest text-white/50">Media</div>
+              <div className="grid grid-cols-2 gap-2">
+                <button onClick={() => fileInputRef.current?.click()} className="rounded-lg bg-white/5 px-3 py-2 text-sm font-semibold text-white/80 hover:bg-white/10">Background</button>
+                <button onClick={handleClearBackground} className="rounded-lg bg-white/5 px-3 py-2 text-sm font-semibold text-rose-200 hover:bg-rose-500/10">Clear Bg</button>
+                <button onClick={() => objectFileInputRef.current?.click()} className="rounded-lg bg-white/5 px-3 py-2 text-sm font-semibold text-white/80 hover:bg-white/10">Upload</button>
+                <button onClick={() => { setActiveModal('video'); setShowAdminPanel(false); }} className="rounded-lg bg-white/5 px-3 py-2 text-sm font-semibold text-white/80 hover:bg-white/10">Video URL</button>
+                <button onClick={() => { setActiveModal('iframe'); setShowAdminPanel(false); }} className="rounded-lg bg-white/5 px-3 py-2 text-sm font-semibold text-white/80 hover:bg-white/10">iFrame</button>
+                <button onClick={() => { setActiveModal('document'); setShowAdminPanel(false); }} className="rounded-lg bg-white/5 px-3 py-2 text-sm font-semibold text-white/80 hover:bg-white/10">Doc URL</button>
+              </div>
+              <button onClick={handleDeleteAllObjects} className="mt-2 w-full rounded-lg bg-rose-500/10 px-3 py-2 text-sm font-bold text-rose-200 hover:bg-rose-500/20">Delete All Media</button>
+            </div>
+
+            {adminNotice && <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/70">{adminNotice}</div>}
+          </div>
+        </div>
       )}
 
       <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 flex items-center gap-2 bg-[#0f172a]/90 backdrop-blur-xl px-4 py-3 rounded-2xl shadow-[0_20px_40px_rgba(0,0,0,0.6)] z-50 border border-white/20 h-[72px]">
@@ -458,8 +745,9 @@ const GamePage = () => {
                     <button onClick={() => { setActiveModal('video'); setShowAddMenu(false); }} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.Youtube /></div> <span>Embed Video URL</span> </button> 
                     <button onClick={() => { setActiveModal('iframe'); setShowAddMenu(false); }} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.Code /></div> <span>Embed iFrame</span> </button> 
                     <button onClick={() => { setActiveModal('image'); setShowAddMenu(false); }} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.Monitor /></div> <span>Embed Image URL</span> </button> 
+                    <button onClick={() => { setActiveModal('document'); setShowAddMenu(false); }} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.File /></div> <span>Embed Document URL</span> </button> 
                     <div className="h-px bg-white/5 my-1"></div> 
-                    <button onClick={() => { setInteractiveObjects([]); if(channel) activeChannelRef.current?.send({ type:'broadcast', event:'admin_delete_object', payload:{id:'ALL'}}); setShowAddMenu(false); }} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-rose-500/10 text-rose-400 flex items-center gap-4 transition-colors"> <div className="text-rose-400/50"><Icons.Trash /></div> <span>Delete All Objects</span> </button> 
+                    <button onClick={handleDeleteAllObjects} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-rose-500/10 text-rose-400 flex items-center gap-4 transition-colors"> <div className="text-rose-400/50"><Icons.Trash /></div> <span>Delete All Media</span> </button> 
                   </div> 
                 )} 
               </div> 
@@ -469,14 +757,14 @@ const GamePage = () => {
       </div>
       
       <input type="file" ref={fileInputRef} hidden accept="image/*" onChange={handleBackgroundUpload} />
-      <input type="file" ref={objectFileInputRef} hidden accept="image/*,video/*,application/pdf" onChange={handleObjectUpload} />
+      <input type="file" ref={objectFileInputRef} hidden accept="image/*,video/*,application/pdf,.pdf,.ppt,.pptx,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation" onChange={handleObjectUpload} />
       
       {/* Modal Dialog for Admin */}
       {activeModal && ( 
         <div className="absolute inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[100]"> 
           <div className="bg-[#111827] border border-white/10 text-white p-6 rounded-3xl w-[420px] shadow-[0_20px_60px_rgba(0,0,0,0.8)] animate-scale-in"> 
             <div className="flex justify-between items-center mb-6"> 
-              <h3 className="text-xl font-bold tracking-wide">Add {activeModal === 'iframe' ? 'Embed' : activeModal === 'video' ? 'Video' : 'Image'}</h3> 
+              <h3 className="text-xl font-bold tracking-wide">Add {activeModal === 'iframe' ? 'Embed' : activeModal === 'video' ? 'Video' : activeModal === 'document' ? 'Document' : 'Image'}</h3> 
               <button onClick={() => setActiveModal(null)} className="text-white/30 hover:text-white p-2 bg-white/5 rounded-full transition-colors"><Icons.Close /></button> 
             </div> 
             <div className="space-y-4"> 

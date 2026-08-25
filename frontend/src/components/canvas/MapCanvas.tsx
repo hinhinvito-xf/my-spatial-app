@@ -10,12 +10,13 @@ export interface MapData { width: number; height: number; tiles: number[][]; spa
 
 export interface InteractiveObject {
   id: string;
-  type: 'image' | 'video' | 'iframe';
+  type: 'image' | 'video' | 'iframe' | 'document';
   x: number; 
   y: number; 
   width: number; 
   height: number;
   src: string;
+  title?: string;
 }
 
 export interface FloatingEmoji {
@@ -41,6 +42,10 @@ interface MapCanvasProps {
   floatingEmojis?: FloatingEmoji[];
   zoomLevel: number;
   onZoomChange: (zoom: number) => void;
+  canAdminEdit?: boolean;
+  layoutEditMode?: boolean;
+  tilePaintMode?: 'wall' | 'floor';
+  onPaintTile?: (x: number, y: number, tileType: 0 | 1) => void;
 }
 
 const TILE_SIZE = 48;
@@ -110,7 +115,7 @@ export const drawHumanSprite = (ctx: CanvasRenderingContext2D, config: AvatarCon
   ctx.restore();
 };
 
-export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, otherUsers, onInteract, localVideoRef, remoteVideoRefs, remoteCamFrames, backgroundImage, interactiveObjects = [], onUpdateObject, onDeleteObject, floatingEmojis = [], zoomLevel, onZoomChange }) => {
+export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, otherUsers, onInteract, localVideoRef, remoteVideoRefs, remoteCamFrames, backgroundImage, interactiveObjects = [], onUpdateObject, onDeleteObject, floatingEmojis = [], zoomLevel, onZoomChange, canAdminEdit = false, layoutEditMode = false, tilePaintMode = 'wall', onPaintTile }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const objectsLayerRef = useRef<HTMLDivElement>(null);
@@ -120,8 +125,9 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, othe
   
   const [dragState, setDragState] = useState<{ id: string, startX: number, startY: number, initX: number, initY: number, initW: number, initH: number, mode: 'move' | 'resize' } | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [isPaintingLayout, setIsPaintingLayout] = useState(false);
 
-  const isAdmin = currentUser.displayName === 'AdminXiangFei123';
+  const isAdmin = canAdminEdit;
 
   useEffect(() => {
     if (backgroundImage) { const img = new Image(); img.src = backgroundImage; img.onload = () => { backgroundImgRef.current = img; }; } 
@@ -167,7 +173,40 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, othe
     setSelectedId(obj.id); 
   };
 
-  const handleMapClick = () => { setSelectedId(null); };
+  const getTileFromPointer = (clientX: number, clientY: number) => {
+    if (!canvasRef.current) return null;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const px = currentUser.x * TILE_SIZE + TILE_SIZE / 2;
+    const py = currentUser.y * TILE_SIZE + TILE_SIZE / 2;
+    const worldX = ((clientX - rect.left) - rect.width / 2) / zoomLevel + px;
+    const worldY = ((clientY - rect.top) - rect.height / 2) / zoomLevel + py;
+
+    return {
+      x: Math.floor(worldX / TILE_SIZE),
+      y: Math.floor(worldY / TILE_SIZE),
+    };
+  };
+
+  const paintTileFromEvent = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!isAdmin || !layoutEditMode || !onPaintTile) return false;
+    const tile = getTileFromPointer(e.clientX, e.clientY);
+    if (!tile || !mapData) return false;
+    if (tile.x < 0 || tile.y < 0 || tile.x >= mapData.width || tile.y >= mapData.height) return false;
+
+    onPaintTile(tile.x, tile.y, tilePaintMode === 'wall' ? 1 : 0);
+    return true;
+  };
+
+  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    setSelectedId(null);
+    if (paintTileFromEvent(e)) setIsPaintingLayout(true);
+  };
+
+  const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (isPaintingLayout) paintTileFromEvent(e);
+  };
+
+  const stopPaintingLayout = () => setIsPaintingLayout(false);
 
   useEffect(() => {
     if (!dragState) return;
@@ -205,8 +244,49 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, othe
     const startCol = Math.floor((px - vw/2)/TILE_SIZE)-1; const endCol = startCol + Math.ceil(vw/TILE_SIZE)+2; 
     const startRow = Math.floor((py - vh/2)/TILE_SIZE)-1; const endRow = startRow + Math.ceil(vh/TILE_SIZE)+2; 
 
-    if (backgroundImgRef.current) { const mapPixelWidth = mapData.width * TILE_SIZE; const mapPixelHeight = mapData.height * TILE_SIZE; ctx.drawImage(backgroundImgRef.current, 0, 0, mapPixelWidth, mapPixelHeight); } 
-    else { for (let y = startRow; y < endRow; y++) { for (let x = startCol; x < endCol; x++) { if (y>=0 && y<mapData.height && x>=0 && x<mapData.width) { const tileType = mapData.tiles[y][x]; if (tileType === 0) { ctx.fillStyle = (x+y)%2===0 ? '#e2e8f0' : '#f1f5f9'; ctx.fillRect(x*TILE_SIZE, y*TILE_SIZE, TILE_SIZE, TILE_SIZE); } else { ctx.fillStyle = '#1e293b'; ctx.fillRect(x*TILE_SIZE, y*TILE_SIZE - TILE_SIZE/2, TILE_SIZE, TILE_SIZE * 1.5); } } } } }
+    if (backgroundImgRef.current) {
+      const mapPixelWidth = mapData.width * TILE_SIZE;
+      const mapPixelHeight = mapData.height * TILE_SIZE;
+      ctx.drawImage(backgroundImgRef.current, 0, 0, mapPixelWidth, mapPixelHeight);
+    } else {
+      for (let y = startRow; y < endRow; y++) {
+        for (let x = startCol; x < endCol; x++) {
+          if (y >= 0 && y < mapData.height && x >= 0 && x < mapData.width) {
+            const tileType = mapData.tiles[y][x];
+            if (tileType === 0) {
+              ctx.fillStyle = (x + y) % 2 === 0 ? '#e2e8f0' : '#f1f5f9';
+              ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+            }
+          }
+        }
+      }
+    }
+
+    for (let y = startRow; y < endRow; y++) {
+      for (let x = startCol; x < endCol; x++) {
+        if (y >= 0 && y < mapData.height && x >= 0 && x < mapData.width && mapData.tiles[y][x] === 1) {
+          ctx.fillStyle = backgroundImgRef.current ? 'rgba(0,0,0,0.82)' : '#1e293b';
+          ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+        }
+      }
+    }
+
+    if (isAdmin && layoutEditMode) {
+      ctx.strokeStyle = 'rgba(37,99,235,0.28)';
+      ctx.lineWidth = 1 / zoom;
+      for (let x = startCol; x <= endCol; x++) {
+        ctx.beginPath();
+        ctx.moveTo(x * TILE_SIZE, startRow * TILE_SIZE);
+        ctx.lineTo(x * TILE_SIZE, endRow * TILE_SIZE);
+        ctx.stroke();
+      }
+      for (let y = startRow; y <= endRow; y++) {
+        ctx.beginPath();
+        ctx.moveTo(startCol * TILE_SIZE, y * TILE_SIZE);
+        ctx.lineTo(endCol * TILE_SIZE, y * TILE_SIZE);
+        ctx.stroke();
+      }
+    }
 
     // Smooth Remote Position LERP Filter to prevent network ghosting/stutter
     const visibleUsers = [...otherUsers, currentUser].filter(u => u.x >= startCol - 2 && u.x <= endCol + 2 && u.y >= startRow - 2 && u.y <= endRow + 2).sort((a, b) => a.y - b.y);
@@ -291,7 +371,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, othe
 
   return (
     <div ref={containerRef} className="absolute inset-0 w-full h-full bg-slate-900 overflow-hidden">
-      <canvas ref={canvasRef} className="block absolute top-0 left-0 z-0" onMouseDown={handleMapClick} />
+      <canvas
+        ref={canvasRef}
+        className={`block absolute top-0 left-0 z-0 ${isAdmin && layoutEditMode ? 'cursor-crosshair' : ''}`}
+        onMouseDown={handleCanvasMouseDown}
+        onMouseMove={handleCanvasMouseMove}
+        onMouseUp={stopPaintingLayout}
+        onMouseLeave={stopPaintingLayout}
+      />
       
       <div ref={objectsLayerRef} className="absolute top-0 left-0 z-10 origin-top-left pointer-events-none" style={{ width: 0, height: 0 }}>
         {interactiveObjects?.map(obj => {
@@ -347,6 +434,14 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, othe
                     className="w-full h-full"
                     ref={el => { if(el) mediaRefs.current[obj.id] = el; }} 
                   />
+                ) : obj.type === 'document' ? (
+                  <div className="w-full h-full bg-slate-100 text-slate-900 flex flex-col items-center justify-center gap-3 p-4 text-center">
+                    <div className="text-xs font-bold uppercase tracking-widest text-slate-500">Document</div>
+                    <div className="max-w-full text-sm font-semibold break-all">{obj.title || obj.src}</div>
+                    <a href={obj.src} target="_blank" rel="noreferrer" className="px-3 py-2 rounded-md bg-blue-600 text-white text-xs font-bold hover:bg-blue-500">
+                      Open
+                    </a>
+                  </div>
                 ) : (
                   <iframe src={obj.src} className="w-full h-full bg-white" />
                 )}
