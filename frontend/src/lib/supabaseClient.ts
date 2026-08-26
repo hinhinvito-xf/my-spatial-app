@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const LOCAL_WORLD_STATE_KEY = 'spatial_world_state';
 
 const createLocalChannel = (topic: string) => {
   const cleanup: Array<() => void> = [];
@@ -64,6 +65,24 @@ const createLocalChannel = (topic: string) => {
 const localSupabase = {
   channel: (topic: string) => createLocalChannel(topic),
   removeChannel: (channel: { unsubscribe?: () => Promise<string> }) => channel.unsubscribe?.() ?? Promise.resolve('ok'),
+  functions: {
+    invoke: async (_name: string, options?: { body?: any }) => {
+      const body = options?.body ?? {};
+      if (body.action === 'save_state') {
+        window.localStorage.setItem(LOCAL_WORLD_STATE_KEY, JSON.stringify(body.state));
+        return { data: { state: body.state, updatedAt: new Date().toISOString() }, error: null };
+      }
+      if (body.action === 'upload_media') {
+        return { data: { url: body.dataUrl, path: 'local-preview', contentType: 'application/octet-stream' }, error: null };
+      }
+
+      const stored = window.localStorage.getItem(LOCAL_WORLD_STATE_KEY);
+      return {
+        data: { state: stored ? JSON.parse(stored) : null, updatedAt: null },
+        error: null,
+      };
+    },
+  },
   storage: {
     from: () => ({
       upload: async () => ({ data: null, error: { message: 'Supabase storage is not configured locally.' } }),

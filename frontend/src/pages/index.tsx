@@ -101,11 +101,18 @@ interface WorldStateSnapshot {
   interactiveObjects: InteractiveObject[];
 }
 
+interface PersistedWorldState {
+  mapData: MapData;
+  backgroundImage: string | null;
+  interactiveObjects: InteractiveObject[];
+}
+
 const ADMIN_NAME = 'admin';
 const ADMIN_PASSWORD = 'xf123';
 const DEFAULT_STAFF_CRITERIA: StaffCriteria = { nameContains: 'staff', password: 'staff123' };
 const STAFF_CRITERIA_STORAGE_KEY = 'spatial_staff_criteria';
 const MAP_LAYOUT_STORAGE_KEY = 'spatial_map_layout';
+const WORLD_STATE_STORAGE_KEY = 'spatial_world_state';
 
 const loadStaffCriteria = (): StaffCriteria => {
   if (typeof window === 'undefined') return DEFAULT_STAFF_CRITERIA;
@@ -149,6 +156,68 @@ const saveMapLayout = (mapData: MapData) => {
     window.localStorage.setItem(MAP_LAYOUT_STORAGE_KEY, JSON.stringify(mapData));
   }
 };
+
+const getDefaultWorldState = (): PersistedWorldState => ({
+  mapData: generateCityMap(MAP_SIZE),
+  backgroundImage: null,
+  interactiveObjects: [],
+});
+
+const isValidMapData = (value: unknown): value is MapData => {
+  const map = value as MapData;
+  return Boolean(
+    map &&
+    map.width === MAP_SIZE &&
+    map.height === MAP_SIZE &&
+    Array.isArray(map.tiles) &&
+    map.tiles.length === MAP_SIZE &&
+    map.tiles.every(row => Array.isArray(row) && row.length === MAP_SIZE)
+  );
+};
+
+const isDefaultMapData = (mapData: MapData) => (
+  mapData.tiles.every((row, y) => row.every((tile, x) => {
+    const expected = x === 0 || y === 0 || x === MAP_SIZE - 1 || y === MAP_SIZE - 1 ? 1 : 0;
+    return tile === expected;
+  }))
+);
+
+const normalizeWorldState = (value?: Partial<PersistedWorldState> | null): PersistedWorldState => {
+  const fallback = getDefaultWorldState();
+  return {
+    mapData: isValidMapData(value?.mapData) ? value.mapData : fallback.mapData,
+    backgroundImage: typeof value?.backgroundImage === 'string' ? value.backgroundImage : null,
+    interactiveObjects: Array.isArray(value?.interactiveObjects) ? value.interactiveObjects : [],
+  };
+};
+
+const loadLocalWorldState = (): PersistedWorldState => {
+  if (typeof window === 'undefined') return getDefaultWorldState();
+
+  try {
+    const stored = window.localStorage.getItem(WORLD_STATE_STORAGE_KEY);
+    if (stored) return normalizeWorldState(JSON.parse(stored));
+  } catch {
+    // Ignore invalid legacy local state.
+  }
+
+  return {
+    ...getDefaultWorldState(),
+    mapData: loadMapLayout(),
+  };
+};
+
+const saveLocalWorldState = (state: PersistedWorldState) => {
+  if (typeof window !== 'undefined') {
+    window.localStorage.setItem(WORLD_STATE_STORAGE_KEY, JSON.stringify(state));
+  }
+};
+
+const hasCustomWorldState = (state: PersistedWorldState) => (
+  Boolean(state.backgroundImage) ||
+  state.interactiveObjects.length > 0 ||
+  !isDefaultMapData(state.mapData)
+);
 
 const applyTileUpdate = (mapData: MapData, tileX: number, tileY: number, tileType: 0 | 1): MapData => {
   if (tileX < 0 || tileY < 0 || tileX >= mapData.width || tileY >= mapData.height) return mapData;
@@ -223,6 +292,8 @@ const GamePage = () => {
   const [staffCriteria, setStaffCriteria] = useState<StaffCriteria>(() => loadStaffCriteria());
   const [staffCriteriaForm, setStaffCriteriaForm] = useState<StaffCriteria>(() => loadStaffCriteria());
   const [adminNotice, setAdminNotice] = useState<string | null>(null);
+  const [isWorldStateLoading, setIsWorldStateLoading] = useState(true);
+  const [worldStateError, setWorldStateError] = useState<string | null>(null);
   const initialSpawn = useMemo(() => getRandomSpawn(mapData), [mapData]);
   const [otherUsers, setOtherUsers] = useState<User[]>([]);
   const { x, y, direction } = useAvatarMovement(initialSpawn.x, initialSpawn.y, mapData, otherUsers);
@@ -246,6 +317,7 @@ const GamePage = () => {
   
   const [channel, setChannel] = useState<RealtimeChannel | null>(null);
   const activeChannelRef = useRef<RealtimeChannel | null>(null);
+  const persistWorldStateTimerRef = useRef<NodeJS.Timeout | null>(null);
   
   const [zoomLevel, setZoomLevel] = useState(1.0);
   
@@ -339,6 +411,12 @@ const GamePage = () => {
     activeChannelRef.current?.send({ type: 'broadcast', event, payload }).catch(() => {});
   }, []);
 
+  const buildPersistedWorldState = useCallback((): PersistedWorldState => ({
+    mapData: mapDataRef.current,
+    backgroundImage: backgroundImageRef.current,
+    interactiveObjects: interactiveObjectsRef.current,
+  }), []);
+
   const buildWorldStateSnapshot = useCallback((): WorldStateSnapshot => ({
     mapData: mapDataRef.current,
     staffCriteria: staffCriteriaRef.current,
@@ -346,19 +424,96 @@ const GamePage = () => {
     interactiveObjects: interactiveObjectsRef.current,
   }), []);
 
+  const applyPersistedWorldState = useCallback((snapshot?: Partial<PersistedWorldState> | null) => {
+    const next = normalizeWorldState(snapshot);
+    mapDataRef.current = next.mapData;
+    backgroundImageRef.current = next.backgroundImage;
+    interactiveObjectsRef.current = next.interactiveObjects;
+    setMapData(next.mapData);
+    setBackgroundImage(next.backgroundImage);
+    setInteractiveObjects(next.interactiveObjects);
+    saveMapLayout(next.mapData);
+    saveLocalWorldState(next);
+  }, []);
+
   const applyWorldStateSnapshot = useCallback((snapshot?: Partial<WorldStateSnapshot>) => {
     if (!snapshot) return;
-    if (snapshot.mapData?.tiles) setMapData(snapshot.mapData);
+    if (snapshot.mapData?.tiles) {
+      mapDataRef.current = snapshot.mapData;
+      setMapData(snapshot.mapData);
+    }
     if (snapshot.staffCriteria) setStaffCriteria(snapshot.staffCriteria);
     if (typeof snapshot.backgroundImage === 'string' || snapshot.backgroundImage === null) {
+      backgroundImageRef.current = snapshot.backgroundImage;
       setBackgroundImage(snapshot.backgroundImage);
     }
     if (Array.isArray(snapshot.interactiveObjects)) {
+      interactiveObjectsRef.current = snapshot.interactiveObjects;
       setInteractiveObjects(snapshot.interactiveObjects);
     }
   }, []);
 
+  const loadPersistedWorldState = useCallback(async () => {
+    setIsWorldStateLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('spatial-world', {
+        body: { action: 'get_state' },
+      });
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
+
+      const remoteState = normalizeWorldState((data as any)?.state);
+      const localState = loadLocalWorldState();
+      const shouldKeepLocalState = !hasCustomWorldState(remoteState) && hasCustomWorldState(localState);
+      applyPersistedWorldState(shouldKeepLocalState ? localState : remoteState);
+      setWorldStateError(null);
+    } catch (error) {
+      applyPersistedWorldState(loadLocalWorldState());
+      setWorldStateError(error instanceof Error ? error.message : 'Could not load saved world state.');
+    } finally {
+      setIsWorldStateLoading(false);
+    }
+  }, [applyPersistedWorldState]);
+
+  useEffect(() => {
+    loadPersistedWorldState();
+  }, [loadPersistedWorldState]);
+
+  const persistWorldState = useCallback(async (nextState?: PersistedWorldState) => {
+    if (roleRef.current !== 'admin') return;
+    const state = normalizeWorldState(nextState ?? buildPersistedWorldState());
+    saveLocalWorldState(state);
+
+    try {
+      const { data, error } = await supabase.functions.invoke('spatial-world', {
+        body: { action: 'save_state', adminPassword: password, state },
+      });
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
+      setWorldStateError(null);
+    } catch (error) {
+      setWorldStateError(error instanceof Error ? error.message : 'Could not save world state.');
+      setAdminNotice('World state could not be saved to the server.');
+    }
+  }, [buildPersistedWorldState, password]);
+
+  const queuePersistWorldState = useCallback((nextState?: PersistedWorldState) => {
+    if (roleRef.current !== 'admin') return;
+    if (persistWorldStateTimerRef.current) clearTimeout(persistWorldStateTimerRef.current);
+
+    const snapshot = normalizeWorldState(nextState ?? buildPersistedWorldState());
+    persistWorldStateTimerRef.current = setTimeout(() => {
+      persistWorldState(snapshot);
+      persistWorldStateTimerRef.current = null;
+    }, 500);
+  }, [buildPersistedWorldState, persistWorldState]);
+
+  useEffect(() => () => {
+    if (persistWorldStateTimerRef.current) clearTimeout(persistWorldStateTimerRef.current);
+  }, []);
+
   const handleJoinWorld = () => {
+    if (isWorldStateLoading) return;
     const trimmedName = username.trim();
     if (!trimmedName) return;
 
@@ -395,6 +550,14 @@ const GamePage = () => {
     setIsGameStarted(true);
   };
 
+  useEffect(() => {
+    if (!isGameStarted || !isAdmin || isWorldStateLoading) return;
+    const currentState = buildPersistedWorldState();
+    if (hasCustomWorldState(currentState)) {
+      queuePersistWorldState(currentState);
+    }
+  }, [buildPersistedWorldState, isAdmin, isGameStarted, isWorldStateLoading, queuePersistWorldState]);
+
   const handleSaveStaffCriteria = () => {
     const nextCriteria = {
       nameContains: staffCriteriaForm.nameContains.trim(),
@@ -417,13 +580,15 @@ const GamePage = () => {
     mapDataRef.current = next;
     setMapData(next);
     sendAdminBroadcast('admin_update_tile', { x: tileX, y: tileY, tileType });
-  }, [sendAdminBroadcast]);
+    queuePersistWorldState({ ...buildPersistedWorldState(), mapData: next });
+  }, [buildPersistedWorldState, queuePersistWorldState, sendAdminBroadcast]);
 
   const handleResetMapLayout = () => {
     const nextMap = generateCityMap(MAP_SIZE);
     mapDataRef.current = nextMap;
     setMapData(nextMap);
     sendAdminBroadcast('admin_replace_map_layout', nextMap);
+    queuePersistWorldState({ ...buildPersistedWorldState(), mapData: nextMap });
     setAdminNotice('Map layout reset.');
   };
 
@@ -465,74 +630,80 @@ const GamePage = () => {
     }
   };
 
+  const uploadSharedMedia = useCallback(async (file: File, kind: 'object' | 'background') => {
+    if (file.size > MAX_INLINE_MEDIA_BYTES) {
+      throw new Error(`"${file.name}" is too large. Please use a file under 4 MB.`);
+    }
+
+    const dataUrl = await readFileAsDataUrl(file);
+    const { data, error } = await supabase.functions.invoke('spatial-world', {
+      body: {
+        action: 'upload_media',
+        adminPassword: password,
+        kind,
+        fileName: file.name,
+        dataUrl,
+      },
+    });
+
+    if (error) throw error;
+    if ((data as any)?.error) throw new Error((data as any).error);
+    if (typeof (data as any)?.url !== 'string') throw new Error('Upload did not return a shared URL.');
+    return (data as any).url as string;
+  }, [password]);
+
   const handleObjectUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const fileName = `${userId}_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.\-_]/g, '')}`;
-    let url = '';
+    let url: string;
     try {
-      url = await getSharedUploadUrl(`objects/${fileName}`, file);
+      url = await uploadSharedMedia(file, 'object');
     } catch (error) {
-      if (file.size > MAX_INLINE_MEDIA_BYTES) {
-        setAdminNotice(`Upload failed and "${file.name}" is too large for live fallback. Please use a smaller file or configure Supabase storage.`);
-        e.target.value = '';
-        return;
-      }
-      try {
-        url = await readFileAsDataUrl(file);
-        setAdminNotice('Storage upload is unavailable, so this file is being shared inline for the live room.');
-      } catch {
-        setAdminNotice(error instanceof Error ? error.message : 'Storage upload failed.');
-        e.target.value = '';
-        return;
-      }
+      setAdminNotice(error instanceof Error ? error.message : 'Storage upload failed.');
+      e.target.value = '';
+      return;
     }
 
     const type = getUploadedMediaType(file);
     const newObj: InteractiveObject = { id: uuidv4(), type, x, y: y-4, width: 6, height: 4, src: url, title: file.name };
-    setInteractiveObjects(prev => [...prev, newObj]);
+    const nextObjects = [...interactiveObjectsRef.current, newObj];
+    interactiveObjectsRef.current = nextObjects;
+    setInteractiveObjects(nextObjects);
     sendAdminBroadcast('admin_add_object', newObj);
+    queuePersistWorldState({ ...buildPersistedWorldState(), interactiveObjects: nextObjects });
     e.target.value = '';
     setShowAddMenu(false);
   };
 
   const handleClearBackground = () => {
+    backgroundImageRef.current = null;
     setBackgroundImage(null);
     sendAdminBroadcast('admin_clear_background', {});
+    queuePersistWorldState({ ...buildPersistedWorldState(), backgroundImage: null });
   };
 
   const handleBackgroundUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const previewUrl = URL.createObjectURL(file);
+    const previousBackground = backgroundImageRef.current;
     setBackgroundImage(previewUrl);
 
-    const fileName = `bg_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.\-_]/g, '')}`;
-    let bgUrl = '';
+    let bgUrl: string;
     try {
-      bgUrl = await getSharedUploadUrl(`bg/${fileName}`, file);
-    } catch {
-      if (file.size > MAX_INLINE_MEDIA_BYTES) {
-        setBackgroundImage(null);
-        setAdminNotice(`Background upload failed and "${file.name}" is too large for live fallback. Please use a smaller image or configure Supabase storage.`);
-        e.target.value = '';
-        URL.revokeObjectURL(previewUrl);
-        return;
-      }
-      try {
-        bgUrl = await readFileAsDataUrl(file);
-        setAdminNotice('Storage upload is unavailable, so this background is being shared inline for the live room.');
-      } catch {
-        setBackgroundImage(null);
-        setAdminNotice('Background upload failed.');
-        e.target.value = '';
-        URL.revokeObjectURL(previewUrl);
-        return;
-      }
+      bgUrl = await uploadSharedMedia(file, 'background');
+    } catch (error) {
+      setBackgroundImage(previousBackground);
+      setAdminNotice(error instanceof Error ? error.message : 'Background upload failed.');
+      e.target.value = '';
+      URL.revokeObjectURL(previewUrl);
+      return;
     }
 
+    backgroundImageRef.current = bgUrl;
     setBackgroundImage(bgUrl);
     sendAdminBroadcast('admin_upload_background', { image: bgUrl });
+    queuePersistWorldState({ ...buildPersistedWorldState(), backgroundImage: bgUrl });
     URL.revokeObjectURL(previewUrl);
     e.target.value = '';
   };
@@ -541,26 +712,37 @@ const GamePage = () => {
     const trimmedSrc = src.trim();
     if (!trimmedSrc) return;
     const newObj: InteractiveObject = { id: uuidv4(), type, x, y: y-4, width: 6, height: 4, src: trimmedSrc };
-    setInteractiveObjects(prev => [...prev, newObj]);
+    const nextObjects = [...interactiveObjectsRef.current, newObj];
+    interactiveObjectsRef.current = nextObjects;
+    setInteractiveObjects(nextObjects);
     sendAdminBroadcast('admin_add_object', newObj);
+    queuePersistWorldState({ ...buildPersistedWorldState(), interactiveObjects: nextObjects });
     setActiveModal(null);
     setModalInput("");
   };
 
   const handleDeleteObject = (id: string) => {
-    setInteractiveObjects(prev => prev.filter(o => o.id !== id));
+    const nextObjects = interactiveObjectsRef.current.filter(o => o.id !== id);
+    interactiveObjectsRef.current = nextObjects;
+    setInteractiveObjects(nextObjects);
     sendAdminBroadcast('admin_delete_object', { id });
+    queuePersistWorldState({ ...buildPersistedWorldState(), interactiveObjects: nextObjects });
   };
 
   const handleDeleteAllObjects = () => {
+    interactiveObjectsRef.current = [];
     setInteractiveObjects([]);
     sendAdminBroadcast('admin_delete_object', { id: 'ALL' });
+    queuePersistWorldState({ ...buildPersistedWorldState(), interactiveObjects: [] });
     setShowAddMenu(false);
   };
 
   const handleUpdateObject = (updatedObj: InteractiveObject) => {
-    setInteractiveObjects(prev => prev.map(o => o.id === updatedObj.id ? updatedObj : o));
+    const nextObjects = interactiveObjectsRef.current.map(o => o.id === updatedObj.id ? updatedObj : o);
+    interactiveObjectsRef.current = nextObjects;
+    setInteractiveObjects(nextObjects);
     sendAdminBroadcast('admin_update_object', updatedObj);
+    queuePersistWorldState({ ...buildPersistedWorldState(), interactiveObjects: nextObjects });
   };
 
   useEffect(() => {
@@ -714,8 +896,9 @@ const GamePage = () => {
             <div className="mt-8 pt-6 border-t border-white/10"> 
               <input type="text" className="w-full p-4 rounded-xl bg-black/50 border border-white/10 focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 outline-none text-white placeholder-white/30 mb-3 transition-all text-sm" placeholder={t('placeholder')} value={username} onChange={e=>{ setUsername(e.target.value); setAuthError(null); }} onKeyDown={e => { if (e.key === 'Enter') handleJoinWorld(); }} /> 
               <input type="password" className="w-full p-4 rounded-xl bg-black/50 border border-white/10 focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 outline-none text-white placeholder-white/30 mb-3 transition-all text-sm" placeholder="Password for admin/staff" value={password} onChange={e=>{ setPassword(e.target.value); setAuthError(null); }} onKeyDown={e => { if (e.key === 'Enter') handleJoinWorld(); }} /> 
+              {worldStateError && <div className="mb-3 rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">{worldStateError}</div>}
               {authError && <div className="mb-3 rounded-xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">{authError}</div>}
-              <button disabled={!username.trim()} onClick={handleJoinWorld} className="w-full bg-blue-600 py-4 rounded-xl font-bold text-white shadow-[0_0_20px_rgba(37,99,235,0.3)] hover:bg-blue-500 hover:shadow-[0_0_25px_rgba(37,99,235,0.5)] active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm uppercase tracking-wider"> {t('join')} </button> 
+              <button disabled={!username.trim() || isWorldStateLoading} onClick={handleJoinWorld} className="w-full bg-blue-600 py-4 rounded-xl font-bold text-white shadow-[0_0_20px_rgba(37,99,235,0.3)] hover:bg-blue-500 hover:shadow-[0_0_25px_rgba(37,99,235,0.5)] active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm uppercase tracking-wider"> {isWorldStateLoading ? 'Loading World...' : t('join')} </button>
             </div> 
           </div> 
         </div> 
