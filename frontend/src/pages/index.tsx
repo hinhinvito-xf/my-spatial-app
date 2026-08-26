@@ -94,6 +94,13 @@ interface StaffCriteria {
   password: string;
 }
 
+interface WorldStateSnapshot {
+  mapData: MapData;
+  staffCriteria: StaffCriteria;
+  backgroundImage: string | null;
+  interactiveObjects: InteractiveObject[];
+}
+
 const ADMIN_NAME = 'admin';
 const ADMIN_PASSWORD = 'xf123';
 const DEFAULT_STAFF_CRITERIA: StaffCriteria = { nameContains: 'staff', password: 'staff123' };
@@ -161,6 +168,34 @@ const getUploadedMediaType = (file: File): InteractiveObject['type'] => {
   return 'document';
 };
 
+const MAX_INLINE_MEDIA_BYTES = 4 * 1024 * 1024;
+
+const readFileAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => {
+    if (typeof reader.result === 'string') resolve(reader.result);
+    else reject(new Error('Unable to read file as a shared data URL.'));
+  };
+  reader.onerror = () => reject(reader.error ?? new Error('Unable to read uploaded file.'));
+  reader.readAsDataURL(file);
+});
+
+const getSharedUploadUrl = async (path: string, file: File) => {
+  const storage = supabase.storage.from('spatial_media');
+  const { data, error } = await storage.upload(path, file, {
+    cacheControl: '3600',
+    upsert: false,
+    contentType: file.type || undefined,
+  });
+
+  if (error || !data) {
+    throw new Error(error?.message || 'Storage upload failed.');
+  }
+
+  const signed = await storage.createSignedUrl(path, 60 * 60 * 24 * 7);
+  return signed.data?.signedUrl || storage.getPublicUrl(path).data.publicUrl;
+};
+
 const GamePage = () => {
   const [userId] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -194,6 +229,10 @@ const GamePage = () => {
   const [isConnected, setIsConnected] = useState(false);
   const [backgroundImage, setBackgroundImage] = useState<string | null>(null);
   const [interactiveObjects, setInteractiveObjects] = useState<InteractiveObject[]>([]);
+  const roleRef = useRef<UserRole>(role);
+  const backgroundImageRef = useRef<string | null>(backgroundImage);
+  const interactiveObjectsRef = useRef<InteractiveObject[]>(interactiveObjects);
+  const staffCriteriaRef = useRef<StaffCriteria>(staffCriteria);
   const [floatingEmojis, setFloatingEmojis] = useState<{ id: string, text: string, x: number, y: number, timestamp: number }[]>([]);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const EMOJI_LIST = ['👍', '👋', '😂', '❤️', '🔥', '🎉'];
@@ -274,17 +313,49 @@ const GamePage = () => {
   const isAdmin = role === 'admin';
 
   useEffect(() => {
+    roleRef.current = role;
+  }, [role]);
+
+  useEffect(() => {
     mapDataRef.current = mapData;
     saveMapLayout(mapData);
   }, [mapData]);
 
   useEffect(() => {
+    staffCriteriaRef.current = staffCriteria;
     saveStaffCriteria(staffCriteria);
     setStaffCriteriaForm(staffCriteria);
   }, [staffCriteria]);
 
+  useEffect(() => {
+    backgroundImageRef.current = backgroundImage;
+  }, [backgroundImage]);
+
+  useEffect(() => {
+    interactiveObjectsRef.current = interactiveObjects;
+  }, [interactiveObjects]);
+
   const sendAdminBroadcast = useCallback((event: string, payload: unknown) => {
     activeChannelRef.current?.send({ type: 'broadcast', event, payload }).catch(() => {});
+  }, []);
+
+  const buildWorldStateSnapshot = useCallback((): WorldStateSnapshot => ({
+    mapData: mapDataRef.current,
+    staffCriteria: staffCriteriaRef.current,
+    backgroundImage: backgroundImageRef.current,
+    interactiveObjects: interactiveObjectsRef.current,
+  }), []);
+
+  const applyWorldStateSnapshot = useCallback((snapshot?: Partial<WorldStateSnapshot>) => {
+    if (!snapshot) return;
+    if (snapshot.mapData?.tiles) setMapData(snapshot.mapData);
+    if (snapshot.staffCriteria) setStaffCriteria(snapshot.staffCriteria);
+    if (typeof snapshot.backgroundImage === 'string' || snapshot.backgroundImage === null) {
+      setBackgroundImage(snapshot.backgroundImage);
+    }
+    if (Array.isArray(snapshot.interactiveObjects)) {
+      setInteractiveObjects(snapshot.interactiveObjects);
+    }
   }, []);
 
   const handleJoinWorld = () => {
@@ -398,12 +469,23 @@ const GamePage = () => {
     const file = e.target.files?.[0];
     if (!file) return;
     const fileName = `${userId}_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.\-_]/g, '')}`;
-    let url = URL.createObjectURL(file);
+    let url = '';
     try {
-      const { data, error } = await supabase.storage.from('spatial_media').upload(`objects/${fileName}`, file, { cacheControl: '3600', upsert: false });
-      if (!error && data) url = supabase.storage.from('spatial_media').getPublicUrl(`objects/${fileName}`).data.publicUrl;
-    } catch {
-      setAdminNotice('Using local preview URL because storage upload is unavailable.');
+      url = await getSharedUploadUrl(`objects/${fileName}`, file);
+    } catch (error) {
+      if (file.size > MAX_INLINE_MEDIA_BYTES) {
+        setAdminNotice(`Upload failed and "${file.name}" is too large for live fallback. Please use a smaller file or configure Supabase storage.`);
+        e.target.value = '';
+        return;
+      }
+      try {
+        url = await readFileAsDataUrl(file);
+        setAdminNotice('Storage upload is unavailable, so this file is being shared inline for the live room.');
+      } catch {
+        setAdminNotice(error instanceof Error ? error.message : 'Storage upload failed.');
+        e.target.value = '';
+        return;
+      }
     }
 
     const type = getUploadedMediaType(file);
@@ -422,20 +504,36 @@ const GamePage = () => {
   const handleBackgroundUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const localUrl = URL.createObjectURL(file);
-    setBackgroundImage(localUrl);
+    const previewUrl = URL.createObjectURL(file);
+    setBackgroundImage(previewUrl);
 
     const fileName = `bg_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.\-_]/g, '')}`;
-    let bgUrl = localUrl;
+    let bgUrl = '';
     try {
-      const { data, error } = await supabase.storage.from('spatial_media').upload(`bg/${fileName}`, file);
-      if (!error && data) bgUrl = supabase.storage.from('spatial_media').getPublicUrl(`bg/${fileName}`).data.publicUrl;
+      bgUrl = await getSharedUploadUrl(`bg/${fileName}`, file);
     } catch {
-      setAdminNotice('Using local background preview because storage upload is unavailable.');
+      if (file.size > MAX_INLINE_MEDIA_BYTES) {
+        setBackgroundImage(null);
+        setAdminNotice(`Background upload failed and "${file.name}" is too large for live fallback. Please use a smaller image or configure Supabase storage.`);
+        e.target.value = '';
+        URL.revokeObjectURL(previewUrl);
+        return;
+      }
+      try {
+        bgUrl = await readFileAsDataUrl(file);
+        setAdminNotice('Storage upload is unavailable, so this background is being shared inline for the live room.');
+      } catch {
+        setBackgroundImage(null);
+        setAdminNotice('Background upload failed.');
+        e.target.value = '';
+        URL.revokeObjectURL(previewUrl);
+        return;
+      }
     }
 
     setBackgroundImage(bgUrl);
     sendAdminBroadcast('admin_upload_background', { image: bgUrl });
+    URL.revokeObjectURL(previewUrl);
     e.target.value = '';
   };
 
@@ -505,6 +603,18 @@ const GamePage = () => {
       .on('broadcast', { event: 'admin_update_tile' }, ({ payload }) => setMapData(prev => applyTileUpdate(prev, payload.x, payload.y, payload.tileType)))
       .on('broadcast', { event: 'admin_replace_map_layout' }, ({ payload }) => setMapData(payload as MapData))
       .on('broadcast', { event: 'admin_update_staff_criteria' }, ({ payload }) => setStaffCriteria(payload as StaffCriteria))
+      .on('broadcast', { event: 'world_state_request' }, ({ payload }) => {
+        if (roleRef.current !== 'admin' || payload?.requesterId === userId) return;
+        newChannel.send({
+          type: 'broadcast',
+          event: 'admin_world_state',
+          payload: { requesterId: payload?.requesterId, state: buildWorldStateSnapshot() },
+        }).catch(() => {});
+      })
+      .on('broadcast', { event: 'admin_world_state' }, ({ payload }) => {
+        if (payload?.requesterId !== userId) return;
+        applyWorldStateSnapshot(payload.state);
+      })
       .on('broadcast', { event: 'emoji' }, ({ payload }) => setFloatingEmojis(prev => [...prev, { ...payload, timestamp: Date.now() }]))
       .on('broadcast', { event: 'cam_frame' }, ({ payload }) => {
         if (payload.userId === userId) return;
@@ -522,11 +632,20 @@ const GamePage = () => {
           return prev.map(u => u.id === payload.userId ? { ...u, x: payload.x, y: payload.y, direction: payload.direction } : u);
         });
       })
-      .subscribe((status) => { if (status === 'SUBSCRIBED') setIsConnected(true); });
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          setIsConnected(true);
+          newChannel.send({
+            type: 'broadcast',
+            event: 'world_state_request',
+            payload: { requesterId: userId },
+          }).catch(() => {});
+        }
+      });
       
     activeChannelRef.current = newChannel;
     setChannel(newChannel);
-  }, [isGameStarted, userId]);
+  }, [applyWorldStateSnapshot, buildWorldStateSnapshot, isGameStarted, userId]);
 
   const trackRef = useRef(0);
   const trackTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -706,54 +825,57 @@ const GamePage = () => {
         </div>
       )}
 
-      <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 flex items-center gap-2 bg-[#0f172a]/90 backdrop-blur-xl px-4 py-3 rounded-2xl shadow-[0_20px_40px_rgba(0,0,0,0.6)] z-50 border border-white/20 h-[72px]">
-        <div className="relative group cursor-pointer mr-2 border border-white/10 rounded-xl overflow-hidden hover:border-white/30 transition-colors">
+      <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 flex max-w-[calc(100vw-24px)] items-center gap-2 bg-[#0f172a]/90 backdrop-blur-xl px-3 py-3 rounded-2xl shadow-[0_20px_40px_rgba(0,0,0,0.6)] z-50 border border-white/20 min-h-[72px]">
+        <div className="relative group cursor-pointer mr-1 shrink-0 border border-white/10 rounded-xl overflow-hidden hover:border-white/30 transition-colors">
           <div className="w-12 h-12 bg-gradient-to-tr from-blue-600 to-purple-600 flex items-center justify-center text-white font-bold text-sm">{username.slice(0,2).toUpperCase()}</div>
         </div>
-        <div className="w-px h-8 bg-white/10 mx-2"></div>
-        <button onClick={toggleMic} className={`w-12 h-12 flex items-center justify-center rounded-xl transition-all duration-300 ${isMicOn ? 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30' : 'bg-white/5 text-white/50 hover:bg-white/10 hover:text-white'}`}>
+        <div className="w-px h-8 shrink-0 bg-white/10 mx-1"></div>
+        <button onClick={toggleMic} className={`w-12 h-12 shrink-0 flex items-center justify-center rounded-xl transition-all duration-300 ${isMicOn ? 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30' : 'bg-white/5 text-white/50 hover:bg-white/10 hover:text-white'}`}>
           {isMicOn ? <Icons.Mic /> : <Icons.MicOff />}
         </button>
-        <button onClick={toggleCamera} className={`w-12 h-12 flex items-center justify-center rounded-xl transition-all duration-300 ${isCameraOn ? 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/30' : 'bg-white/5 text-white/50 hover:bg-white/10 hover:text-white'}`}>
+        <button onClick={toggleCamera} className={`w-12 h-12 shrink-0 flex items-center justify-center rounded-xl transition-all duration-300 ${isCameraOn ? 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/30' : 'bg-white/5 text-white/50 hover:bg-white/10 hover:text-white'}`}>
           {isCameraOn ? <Icons.Video /> : <Icons.CameraOff />}
         </button>
-        <div className="w-px h-8 bg-white/10 mx-2"></div>
-        <button className="w-12 h-12 flex items-center justify-center rounded-xl bg-white/5 hover:bg-white/10 text-white/50 hover:text-white transition-all duration-300"><Icons.Monitor /></button>
-        <div className="relative">
-          <button onClick={() => setShowEmojiPicker(!showEmojiPicker)} className={`w-12 h-12 flex items-center justify-center rounded-xl transition-all duration-300 ${showEmojiPicker ? 'bg-white/20 text-white shadow-inner' : 'bg-white/5 hover:bg-white/10 text-white/50 hover:text-white'}`}>
+        {isAdmin && (
+          <>
+            <div className="w-px h-8 shrink-0 bg-white/10 mx-1"></div>
+            <button className="w-12 h-12 shrink-0 flex items-center justify-center rounded-xl bg-white/5 hover:bg-white/10 text-white/50 hover:text-white transition-all duration-300"><Icons.Monitor /></button>
+          </>
+        )}
+        <div className="relative shrink-0">
+          <button onClick={() => setShowEmojiPicker(!showEmojiPicker)} className={`w-12 h-12 shrink-0 flex items-center justify-center rounded-xl transition-all duration-300 ${showEmojiPicker ? 'bg-white/20 text-white shadow-inner' : 'bg-white/5 hover:bg-white/10 text-white/50 hover:text-white'}`}>
             <Icons.Smile />
           </button>
           {showEmojiPicker && (
-            <div className="absolute bottom-[calc(100%+16px)] left-1/2 transform -translate-x-1/2 bg-[#111827]/90 backdrop-blur-md px-3 py-2 border border-white/10 rounded-xl flex gap-2 shadow-[0_10px_20px_rgba(0,0,0,0.5)] animate-fade-in-up origin-bottom">
+            <div className="absolute bottom-[calc(100%+16px)] left-1/2 transform -translate-x-1/2 bg-[#111827]/90 backdrop-blur-md px-3 py-2 border border-white/10 rounded-xl flex gap-2 shadow-[0_10px_20px_rgba(0,0,0,0.5)] animate-fade-in-up origin-bottom z-[70]">
               {EMOJI_LIST.map(e => <button key={e} onClick={() => sendEmoji(e)} className="text-xl hover:scale-125 transition-transform">{e}</button>)}
             </div>
           )}
-          {/* Admin Tools */}
-          {isAdmin && ( 
-            <> 
-              <div className="w-px h-8 bg-white/10 mx-2"></div> 
-              <div className="relative"> 
-                <button onClick={() => setShowAddMenu(!showAddMenu)} className={`w-12 h-12 flex items-center justify-center rounded-xl transition-all duration-300 ${showAddMenu ? 'bg-white text-black rotate-45 shadow-[0_0_20px_rgba(255,255,255,0.3)]' : 'bg-white/5 hover:bg-white/10 text-white'}`}> 
-                  <Icons.Plus /> 
-                </button> 
-                {showAddMenu && ( 
-                  <div className="absolute bottom-[calc(100%+24px)] left-1/2 transform -translate-x-1/2 w-64 bg-[#111827]/90 backdrop-blur-2xl rounded-2xl shadow-[0_20px_40px_rgba(0,0,0,0.6)] border border-white/10 overflow-hidden py-2 text-white/90 animate-fade-in-up origin-bottom"> 
-                    <button onClick={() => fileInputRef.current?.click()} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.Upload /></div> <span>Upload Map Background</span> </button> 
-                    <button onClick={handleClearBackground} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-rose-500/10 flex items-center gap-4 transition-colors text-rose-400"> <div className="text-rose-400/50"><Icons.Trash /></div> <span>Clear Map</span> </button> 
-                    <div className="h-px bg-white/5 my-1"></div> 
-                    <button onClick={() => objectFileInputRef.current?.click()} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.File /></div> <span>Upload Media File</span> </button>
-                    <button onClick={() => { setActiveModal('video'); setShowAddMenu(false); }} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.Youtube /></div> <span>Embed Video URL</span> </button> 
-                    <button onClick={() => { setActiveModal('iframe'); setShowAddMenu(false); }} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.Code /></div> <span>Embed iFrame</span> </button> 
-                    <button onClick={() => { setActiveModal('image'); setShowAddMenu(false); }} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.Monitor /></div> <span>Embed Image URL</span> </button> 
-                    <button onClick={() => { setActiveModal('document'); setShowAddMenu(false); }} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.File /></div> <span>Embed Document URL</span> </button> 
-                    <div className="h-px bg-white/5 my-1"></div> 
-                    <button onClick={handleDeleteAllObjects} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-rose-500/10 text-rose-400 flex items-center gap-4 transition-colors"> <div className="text-rose-400/50"><Icons.Trash /></div> <span>Delete All Media</span> </button> 
-                  </div> 
-                )} 
-              </div> 
-            </> 
-          )}
         </div>
+        {isAdmin && (
+          <>
+            <div className="w-px h-8 shrink-0 bg-white/10 mx-1"></div>
+            <div className="relative shrink-0">
+              <button onClick={() => setShowAddMenu(!showAddMenu)} className={`w-12 h-12 shrink-0 flex items-center justify-center rounded-xl transition-all duration-300 ${showAddMenu ? 'bg-white text-black rotate-45 shadow-[0_0_20px_rgba(255,255,255,0.3)]' : 'bg-white/5 hover:bg-white/10 text-white'}`}>
+                <Icons.Plus />
+              </button>
+              {showAddMenu && (
+                <div className="absolute bottom-[calc(100%+24px)] left-1/2 transform -translate-x-1/2 w-64 bg-[#111827]/90 backdrop-blur-2xl rounded-2xl shadow-[0_20px_40px_rgba(0,0,0,0.6)] border border-white/10 overflow-hidden py-2 text-white/90 animate-fade-in-up origin-bottom z-[70]">
+                  <button onClick={() => fileInputRef.current?.click()} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.Upload /></div> <span>Upload Map Background</span> </button>
+                  <button onClick={handleClearBackground} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-rose-500/10 flex items-center gap-4 transition-colors text-rose-400"> <div className="text-rose-400/50"><Icons.Trash /></div> <span>Clear Map</span> </button>
+                  <div className="h-px bg-white/5 my-1"></div>
+                  <button onClick={() => objectFileInputRef.current?.click()} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.File /></div> <span>Upload Media File</span> </button>
+                  <button onClick={() => { setActiveModal('video'); setShowAddMenu(false); }} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.Youtube /></div> <span>Embed Video URL</span> </button>
+                  <button onClick={() => { setActiveModal('iframe'); setShowAddMenu(false); }} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.Code /></div> <span>Embed iFrame</span> </button>
+                  <button onClick={() => { setActiveModal('image'); setShowAddMenu(false); }} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.Monitor /></div> <span>Embed Image URL</span> </button>
+                  <button onClick={() => { setActiveModal('document'); setShowAddMenu(false); }} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.File /></div> <span>Embed Document URL</span> </button>
+                  <div className="h-px bg-white/5 my-1"></div>
+                  <button onClick={handleDeleteAllObjects} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-rose-500/10 text-rose-400 flex items-center gap-4 transition-colors"> <div className="text-rose-400/50"><Icons.Trash /></div> <span>Delete All Media</span> </button>
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </div>
       
       <input type="file" ref={fileInputRef} hidden accept="image/*" onChange={handleBackgroundUpload} />

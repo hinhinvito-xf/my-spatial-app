@@ -7,6 +7,13 @@ const createLocalChannel = (topic: string) => {
   const cleanup: Array<() => void> = [];
   const eventName = `spatial-local-broadcast:${topic}`;
   const channelId = Math.random().toString(36).slice(2);
+  const broadcastChannel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(eventName) : null;
+  const receiveMessage = (detail: any, filter: { event?: string }, callback: (payload: any) => void) => {
+    if (!detail || detail.senderId === channelId) return;
+    if (filter.event === '*' || detail.event === filter.event) {
+      callback({ payload: detail.payload });
+    }
+  };
   let channel: any;
 
   channel = {
@@ -14,14 +21,15 @@ const createLocalChannel = (topic: string) => {
     on(type: string, filter: { event?: string }, callback: (payload: any) => void) {
       if (type === 'broadcast' && typeof window !== 'undefined') {
         const handler = (event: Event) => {
-          const detail = (event as CustomEvent).detail;
-          if (detail.senderId === channelId) return;
-          if (filter.event === '*' || detail.event === filter.event) {
-            callback({ payload: detail.payload });
-          }
+          receiveMessage((event as CustomEvent).detail, filter, callback);
+        };
+        const broadcastHandler = (event: MessageEvent) => {
+          receiveMessage(event.data, filter, callback);
         };
         window.addEventListener(eventName, handler);
         cleanup.push(() => window.removeEventListener(eventName, handler));
+        broadcastChannel?.addEventListener('message', broadcastHandler);
+        cleanup.push(() => broadcastChannel?.removeEventListener('message', broadcastHandler));
       }
       return channel;
     },
@@ -37,14 +45,15 @@ const createLocalChannel = (topic: string) => {
     },
     send(message: { type: string; event: string; payload?: unknown }) {
       if (message.type === 'broadcast' && typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent(eventName, {
-          detail: { event: message.event, payload: message.payload, senderId: channelId },
-        }));
+        const detail = { event: message.event, payload: message.payload, senderId: channelId };
+        window.dispatchEvent(new CustomEvent(eventName, { detail }));
+        broadcastChannel?.postMessage(detail);
       }
       return Promise.resolve('ok');
     },
     unsubscribe() {
       cleanup.splice(0).forEach(remove => remove());
+      broadcastChannel?.close();
       return Promise.resolve('ok');
     },
   };
@@ -59,6 +68,7 @@ const localSupabase = {
     from: () => ({
       upload: async () => ({ data: null, error: { message: 'Supabase storage is not configured locally.' } }),
       getPublicUrl: (path: string) => ({ data: { publicUrl: path } }),
+      createSignedUrl: async () => ({ data: null, error: { message: 'Supabase storage is not configured locally.' } }),
     }),
   },
 };
