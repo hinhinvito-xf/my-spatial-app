@@ -10,7 +10,7 @@ export interface MapData { width: number; height: number; tiles: number[][]; spa
 
 export interface InteractiveObject {
   id: string;
-  type: 'image' | 'video' | 'iframe' | 'document';
+  type: 'image' | 'video' | 'iframe' | 'document' | 'notice';
   x: number; 
   y: number; 
   width: number; 
@@ -46,6 +46,7 @@ interface MapCanvasProps {
   layoutEditMode?: boolean;
   tilePaintMode?: 'wall' | 'floor';
   onPaintTile?: (x: number, y: number, tileType: 0 | 1) => void;
+  labels?: { document: string; notice: string; open: string };
 }
 
 const TILE_SIZE = 48;
@@ -115,7 +116,7 @@ export const drawHumanSprite = (ctx: CanvasRenderingContext2D, config: AvatarCon
   ctx.restore();
 };
 
-export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, otherUsers, onInteract, localVideoRef, remoteVideoRefs, remoteCamFrames, backgroundImage, interactiveObjects = [], onUpdateObject, onDeleteObject, floatingEmojis = [], zoomLevel, onZoomChange, canAdminEdit = false, layoutEditMode = false, tilePaintMode = 'wall', onPaintTile }) => {
+export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, otherUsers, onInteract, localVideoRef, remoteVideoRefs, remoteCamFrames, backgroundImage, interactiveObjects = [], onUpdateObject, onDeleteObject, floatingEmojis = [], zoomLevel, onZoomChange, canAdminEdit = false, layoutEditMode = false, tilePaintMode = 'wall', onPaintTile, labels = { document: 'Document', notice: 'Notice', open: 'Open' } }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const objectsLayerRef = useRef<HTMLDivElement>(null);
@@ -434,12 +435,17 @@ export const MapCanvas: React.FC<MapCanvasProps> = ({ mapData, currentUser, othe
                     className="w-full h-full"
                     ref={el => { if(el) mediaRefs.current[obj.id] = el; }} 
                   />
+                ) : obj.type === 'notice' ? (
+                  <div className="w-full h-full border-[6px] border-amber-950 bg-amber-100 text-slate-950 shadow-inner flex flex-col overflow-hidden">
+                    <div className="bg-amber-800 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-amber-50">{obj.title || labels.notice}</div>
+                    <div className="flex-1 whitespace-pre-wrap break-words p-3 text-sm font-semibold leading-snug overflow-auto">{obj.src}</div>
+                  </div>
                 ) : obj.type === 'document' ? (
                   <div className="w-full h-full bg-slate-100 text-slate-900 flex flex-col items-center justify-center gap-3 p-4 text-center">
-                    <div className="text-xs font-bold uppercase tracking-widest text-slate-500">Document</div>
+                    <div className="text-xs font-bold uppercase tracking-widest text-slate-500">{labels.document}</div>
                     <div className="max-w-full text-sm font-semibold break-all">{obj.title || obj.src}</div>
                     <a href={obj.src} target="_blank" rel="noreferrer" className="px-3 py-2 rounded-md bg-blue-600 text-white text-xs font-bold hover:bg-blue-500">
-                      Open
+                      {labels.open}
                     </a>
                   </div>
                 ) : (

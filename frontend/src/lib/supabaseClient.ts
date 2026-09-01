@@ -1,7 +1,11 @@
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const configuredSupabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const productionPublishableKey = 'sb_publishable_yStZeDX7U4yOpkYXMiOZFQ_ByK_8DNF';
+const supabaseAnonKey = configuredSupabaseKey?.startsWith('eyJ')
+  ? productionPublishableKey
+  : configuredSupabaseKey;
 const LOCAL_WORLD_STATE_KEY = 'spatial_world_state';
 
 const createLocalChannel = (topic: string) => {
@@ -75,6 +79,9 @@ const localSupabase = {
       if (body.action === 'upload_media') {
         return { data: { url: body.dataUrl, path: 'local-preview', contentType: 'application/octet-stream' }, error: null };
       }
+      if (body.action === 'create_upload_url') {
+        return { data: { url: '', path: `local-preview/${Date.now()}-${body.fileName || 'upload'}`, token: 'local-token', contentType: body.contentType || null }, error: null };
+      }
 
       const stored = window.localStorage.getItem(LOCAL_WORLD_STATE_KEY);
       return {
@@ -86,6 +93,7 @@ const localSupabase = {
   storage: {
     from: () => ({
       upload: async () => ({ data: null, error: { message: 'Supabase storage is not configured locally.' } }),
+      uploadToSignedUrl: async (path: string) => ({ data: { path, fullPath: path }, error: null }),
       getPublicUrl: (path: string) => ({ data: { publicUrl: path } }),
       createSignedUrl: async () => ({ data: null, error: { message: 'Supabase storage is not configured locally.' } }),
     }),

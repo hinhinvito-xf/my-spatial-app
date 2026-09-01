@@ -14,6 +14,8 @@ const corsHeaders = (origin: string | null) => ({
 
 const WORLD_ID = "global";
 const MAP_SIZE = 200;
+const STORAGE_BUCKET = "spatial_media";
+const DEFAULT_STAFF_CRITERIA = { nameContains: "staff", password: "staff123" };
 const ADMIN_PASSWORD_SHA256 =
   Deno.env.get("SPATIAL_ADMIN_PASSWORD_SHA256") ||
   "d7100eddb3a0ff83df51873ce1019317e9e4ae9695e5b65140fff0372d59d726";
@@ -30,6 +32,7 @@ const defaultMap = () => ({
 
 const defaultState = () => ({
   mapData: defaultMap(),
+  staffCriteria: DEFAULT_STAFF_CRITERIA,
   backgroundImage: null,
   interactiveObjects: [],
 });
@@ -75,9 +78,20 @@ const sanitizeUrl = (value: unknown) => {
   return value.length <= 7_000_000 ? value : null;
 };
 
+const sanitizeStaffCriteria = (value: any) => {
+  const nameContains = typeof value?.nameContains === "string"
+    ? value.nameContains.trim().slice(0, 80)
+    : "";
+  const password = typeof value?.password === "string" ? value.password.trim().slice(0, 120) : "";
+  return {
+    nameContains: nameContains || DEFAULT_STAFF_CRITERIA.nameContains,
+    password: password || DEFAULT_STAFF_CRITERIA.password,
+  };
+};
+
 const sanitizeObjects = (value: unknown) => {
   if (!Array.isArray(value)) return [];
-  const allowedTypes = new Set(["image", "video", "document", "iframe"]);
+  const allowedTypes = new Set(["image", "video", "document", "iframe", "notice"]);
 
   return value.slice(0, 200).flatMap((item: any) => {
     if (!item || typeof item !== "object") return [];
@@ -99,6 +113,7 @@ const sanitizeObjects = (value: unknown) => {
 
 const sanitizeState = (value: any) => ({
   mapData: sanitizeMapData(value?.mapData),
+  staffCriteria: sanitizeStaffCriteria(value?.staffCriteria),
   backgroundImage: sanitizeUrl(value?.backgroundImage),
   interactiveObjects: sanitizeObjects(value?.interactiveObjects),
 });
@@ -166,6 +181,24 @@ const dataUrlToBytes = (dataUrl: string) => {
   return { bytes, contentType };
 };
 
+const cleanFileName = (fileName: unknown) =>
+  String(fileName || "upload.bin").replace(/[^a-zA-Z0-9.\-_]/g, "").slice(0, 120) || "upload.bin";
+
+const createUploadUrl = async (body: any, origin: string | null) => {
+  const denied = await requireAdmin(body, origin);
+  if (denied) return denied;
+
+  const folder = body.kind === "background" ? "bg" : "objects";
+  const path = `${folder}/${Date.now()}_${crypto.randomUUID()}_${cleanFileName(body.fileName)}`;
+  const supabase = adminClient();
+  const { data, error } = await supabase.storage.from(STORAGE_BUCKET).createSignedUploadUrl(path);
+
+  if (error || !data?.token) throw error || new Error("Signed upload token was not created.");
+
+  const { data: publicData } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path);
+  return json({ path, token: data.token, url: publicData.publicUrl, contentType: body.contentType || null }, 200, origin);
+};
+
 const uploadMedia = async (body: any, origin: string | null) => {
   const denied = await requireAdmin(body, origin);
   if (denied) return denied;
@@ -174,11 +207,10 @@ const uploadMedia = async (body: any, origin: string | null) => {
   }
 
   const { bytes, contentType } = dataUrlToBytes(body.dataUrl);
-  const cleanName = String(body.fileName || "upload.bin").replace(/[^a-zA-Z0-9.\-_]/g, "").slice(0, 120) || "upload.bin";
   const folder = body.kind === "background" ? "bg" : "objects";
-  const path = `${folder}/${Date.now()}_${crypto.randomUUID()}_${cleanName}`;
+  const path = `${folder}/${Date.now()}_${crypto.randomUUID()}_${cleanFileName(body.fileName)}`;
   const supabase = adminClient();
-  const { error } = await supabase.storage.from("spatial_media").upload(path, bytes, {
+  const { error } = await supabase.storage.from(STORAGE_BUCKET).upload(path, bytes, {
     cacheControl: "3600",
     contentType,
     upsert: false,
@@ -186,7 +218,7 @@ const uploadMedia = async (body: any, origin: string | null) => {
 
   if (error) throw error;
 
-  const { data } = supabase.storage.from("spatial_media").getPublicUrl(path);
+  const { data } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path);
   return json({ url: data.publicUrl, path, contentType }, 200, origin);
 };
 
@@ -200,6 +232,7 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     if (body.action === "get_state") return json(await loadState(), 200, origin);
     if (body.action === "save_state") return await saveState(body, origin);
+    if (body.action === "create_upload_url") return await createUploadUrl(body, origin);
     if (body.action === "upload_media") return await uploadMedia(body, origin);
 
     return json({ error: "Unknown action." }, 400, origin);

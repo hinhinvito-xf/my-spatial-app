@@ -1,13 +1,14 @@
 import React, { useMemo, useEffect, useState, useRef, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
+import { MessageSquareText } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
-import { getTranslation, Language } from '../lib/i18n';
+import { getTranslation, Language, TranslationKey } from '../lib/i18n';
 import MapCanvas, { MapData, User, AvatarConfig, drawHumanSprite, Direction, InteractiveObject } from '../components/canvas/MapCanvas';
 import { useAvatarMovement } from '../hooks/useAvatarMovement';
 import { useWebRTC } from '../hooks/useWebRTC'; 
 import { RealtimeChannel } from '@supabase/supabase-js';
 
-// Icons using SVG directly so we don't depend on missing libs
+// Existing toolbar icons are kept local; new icons can use the installed lucide set.
 const Icons = {
   Plus: () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>,
   Mic: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>,
@@ -21,11 +22,8 @@ const Icons = {
   Youtube: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
   Code: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>,
   Trash: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>,
-  File: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
-};
-
-const TRANSLATIONS = {
-  en: { title:"Character Creator", subtitle:"Customize your hero", preview:"PREVIEW", displayName:"Display Name", placeholder:"Enter your name...", join:"Join World", online:"ONLINE", offline:"OFFLINE", coords:"Coordinates", nearby:"Nearby", camOn:"Turn Camera ON", camOff:"Turn Camera OFF", controls:"Move: WASD / Arrows", zoom:"Zoom: Scroll", labels:{ skin:"Skin", hair:"Hair", hat:"Hat", face:"Face", shirt:"Shirt", pants:"Pants", shoes:"Shoes"} },
+  File: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>,
+  Notice: () => <MessageSquareText className="w-4 h-4" />,
 };
 
 
@@ -39,7 +37,12 @@ const AVATAR_OPTIONS = {
   shoes:['#000','#fff','#78350f','#dc2626','#3b82f6','#fbbf24']
 };
 
-const AvatarPreview: React.FC<{config:AvatarConfig}> = ({config}) => {
+const AVATAR_TEXT_OPTIONS = new Set([
+  'none', 'short', 'long', 'spiky', 'messy', 'bob', 'cap', 'tophat', 'beanie',
+  'cowboy', 'helmet', 'smile', 'neutral', 'angry', 'surprised', 'tired', 'cool',
+]);
+
+const AvatarPreview: React.FC<{config:AvatarConfig; label: string}> = ({config, label}) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [previewDir, setPreviewDir] = useState<Direction>('down');
   
@@ -58,15 +61,15 @@ const AvatarPreview: React.FC<{config:AvatarConfig}> = ({config}) => {
     ctx.clearRect(0,0,canvas.width,canvas.height);
     ctx.imageSmoothingEnabled = false;
     ctx.save();
-    ctx.translate(27,24);
+    ctx.translate(40,84);
     drawHumanSprite(ctx, config, previewDir, true, 3);
     ctx.restore();
   }, [config, previewDir]);
 
   return (
     <div className="flex flex-col items-center">
-      <canvas ref={canvasRef} width={150} height={150} className="rounded-2xl bg-white/5 border border-white/10 shadow-inner backdrop-blur-sm" />
-      <p className="text-xs text-white/50 mt-3 tracking-widest uppercase">Preview Mode</p>
+      <canvas ref={canvasRef} width={190} height={190} className="rounded-2xl bg-white/5 border border-white/10 shadow-inner backdrop-blur-sm" />
+      <p className="text-xs text-white/50 mt-3 tracking-widest uppercase">{label}</p>
     </div>
   );
 };
@@ -103,6 +106,7 @@ interface WorldStateSnapshot {
 
 interface PersistedWorldState {
   mapData: MapData;
+  staffCriteria: StaffCriteria;
   backgroundImage: string | null;
   interactiveObjects: InteractiveObject[];
 }
@@ -159,6 +163,7 @@ const saveMapLayout = (mapData: MapData) => {
 
 const getDefaultWorldState = (): PersistedWorldState => ({
   mapData: generateCityMap(MAP_SIZE),
+  staffCriteria: DEFAULT_STAFF_CRITERIA,
   backgroundImage: null,
   interactiveObjects: [],
 });
@@ -186,6 +191,9 @@ const normalizeWorldState = (value?: Partial<PersistedWorldState> | null): Persi
   const fallback = getDefaultWorldState();
   return {
     mapData: isValidMapData(value?.mapData) ? value.mapData : fallback.mapData,
+    staffCriteria: value?.staffCriteria?.nameContains && value?.staffCriteria?.password
+      ? { nameContains: String(value.staffCriteria.nameContains), password: String(value.staffCriteria.password) }
+      : loadStaffCriteria(),
     backgroundImage: typeof value?.backgroundImage === 'string' ? value.backgroundImage : null,
     interactiveObjects: Array.isArray(value?.interactiveObjects) ? value.interactiveObjects : [],
   };
@@ -203,6 +211,7 @@ const loadLocalWorldState = (): PersistedWorldState => {
 
   return {
     ...getDefaultWorldState(),
+    staffCriteria: loadStaffCriteria(),
     mapData: loadMapLayout(),
   };
 };
@@ -216,6 +225,8 @@ const saveLocalWorldState = (state: PersistedWorldState) => {
 const hasCustomWorldState = (state: PersistedWorldState) => (
   Boolean(state.backgroundImage) ||
   state.interactiveObjects.length > 0 ||
+  state.staffCriteria.nameContains !== DEFAULT_STAFF_CRITERIA.nameContains ||
+  state.staffCriteria.password !== DEFAULT_STAFF_CRITERIA.password ||
   !isDefaultMapData(state.mapData)
 );
 
@@ -237,34 +248,6 @@ const getUploadedMediaType = (file: File): InteractiveObject['type'] => {
   return 'document';
 };
 
-const MAX_INLINE_MEDIA_BYTES = 4 * 1024 * 1024;
-
-const readFileAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
-  const reader = new FileReader();
-  reader.onload = () => {
-    if (typeof reader.result === 'string') resolve(reader.result);
-    else reject(new Error('Unable to read file as a shared data URL.'));
-  };
-  reader.onerror = () => reject(reader.error ?? new Error('Unable to read uploaded file.'));
-  reader.readAsDataURL(file);
-});
-
-const getSharedUploadUrl = async (path: string, file: File) => {
-  const storage = supabase.storage.from('spatial_media');
-  const { data, error } = await storage.upload(path, file, {
-    cacheControl: '3600',
-    upsert: false,
-    contentType: file.type || undefined,
-  });
-
-  if (error || !data) {
-    throw new Error(error?.message || 'Storage upload failed.');
-  }
-
-  const signed = await storage.createSignedUrl(path, 60 * 60 * 24 * 7);
-  return signed.data?.signedUrl || storage.getPublicUrl(path).data.publicUrl;
-};
-
 const GamePage = () => {
   const [userId] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -282,7 +265,7 @@ const GamePage = () => {
   const [role, setRole] = useState<UserRole>('visitor');
   const [isGameStarted, setIsGameStarted] = useState(false);
   const [language, setLanguage] = useState<Language>('en');
-  const t = (key: any) => getTranslation(language, key);
+  const t = useCallback((key: TranslationKey) => getTranslation(language, key), [language]);
   const [avatar, setAvatar] = useState<AvatarConfig>({ skin: '#fca5a5', hair: 'short', hat: 'none', face: 'smile', shirt: '#3b82f6', pants: '#000', shoes: '#000' });
 
   const [mapData, setMapData] = useState<MapData>(() => loadMapLayout());
@@ -383,10 +366,19 @@ const GamePage = () => {
   const objectFileInputRef = useRef<HTMLInputElement>(null); 
   const fileInputRef = useRef<HTMLInputElement>(null); 
   const isAdmin = role === 'admin';
+  const trimmedUsername = username.trim();
+  const staffNameNeedle = staffCriteria.nameContains.trim().toLowerCase();
+  const needsPassword = trimmedUsername.toLowerCase() === ADMIN_NAME ||
+    (staffNameNeedle.length > 0 && trimmedUsername.toLowerCase().includes(staffNameNeedle));
+  const avatarOptionLabel = (opt: string) => AVATAR_TEXT_OPTIONS.has(opt) ? t(opt as TranslationKey) : opt;
 
   useEffect(() => {
     roleRef.current = role;
   }, [role]);
+
+  useEffect(() => {
+    if (!needsPassword && password) setPassword("");
+  }, [needsPassword, password]);
 
   useEffect(() => {
     mapDataRef.current = mapData;
@@ -413,6 +405,7 @@ const GamePage = () => {
 
   const buildPersistedWorldState = useCallback((): PersistedWorldState => ({
     mapData: mapDataRef.current,
+    staffCriteria: staffCriteriaRef.current,
     backgroundImage: backgroundImageRef.current,
     interactiveObjects: interactiveObjectsRef.current,
   }), []);
@@ -427,12 +420,15 @@ const GamePage = () => {
   const applyPersistedWorldState = useCallback((snapshot?: Partial<PersistedWorldState> | null) => {
     const next = normalizeWorldState(snapshot);
     mapDataRef.current = next.mapData;
+    staffCriteriaRef.current = next.staffCriteria;
     backgroundImageRef.current = next.backgroundImage;
     interactiveObjectsRef.current = next.interactiveObjects;
     setMapData(next.mapData);
+    setStaffCriteria(next.staffCriteria);
     setBackgroundImage(next.backgroundImage);
     setInteractiveObjects(next.interactiveObjects);
     saveMapLayout(next.mapData);
+    saveStaffCriteria(next.staffCriteria);
     saveLocalWorldState(next);
   }, []);
 
@@ -469,11 +465,11 @@ const GamePage = () => {
       setWorldStateError(null);
     } catch (error) {
       applyPersistedWorldState(loadLocalWorldState());
-      setWorldStateError(error instanceof Error ? error.message : 'Could not load saved world state.');
+      setWorldStateError(error instanceof Error ? error.message : t('errorWorldLoad'));
     } finally {
       setIsWorldStateLoading(false);
     }
-  }, [applyPersistedWorldState]);
+  }, [applyPersistedWorldState, t]);
 
   useEffect(() => {
     loadPersistedWorldState();
@@ -493,9 +489,9 @@ const GamePage = () => {
       setWorldStateError(null);
     } catch (error) {
       setWorldStateError(error instanceof Error ? error.message : 'Could not save world state.');
-      setAdminNotice('World state could not be saved to the server.');
+      setAdminNotice(t('errorWorldSaveNotice'));
     }
-  }, [buildPersistedWorldState, password]);
+  }, [buildPersistedWorldState, password, t]);
 
   const queuePersistWorldState = useCallback((nextState?: PersistedWorldState) => {
     if (roleRef.current !== 'admin') return;
@@ -516,8 +512,11 @@ const GamePage = () => {
     if (isWorldStateLoading) return;
     const trimmedName = username.trim();
     if (!trimmedName) return;
+    const lowerName = trimmedName.toLowerCase();
+    const requiredName = staffCriteria.nameContains.trim().toLowerCase();
+    const isStaffName = requiredName.length > 0 && lowerName.includes(requiredName);
 
-    if (trimmedName.toLowerCase() === ADMIN_NAME) {
+    if (lowerName === ADMIN_NAME) {
       if (password === ADMIN_PASSWORD) {
         setUsername(ADMIN_NAME);
         setRole('admin');
@@ -525,22 +524,19 @@ const GamePage = () => {
         setIsGameStarted(true);
         return;
       }
-      setAuthError('Admin password is incorrect.');
+      setAuthError(t('errorAdminPassword'));
       return;
     }
 
-    if (password) {
-      const requiredName = staffCriteria.nameContains.trim().toLowerCase();
-      const isStaffName = requiredName.length > 0 && trimmedName.toLowerCase().includes(requiredName);
-      if (isStaffName && password === staffCriteria.password) {
+    if (isStaffName) {
+      if (password === staffCriteria.password) {
         setUsername(trimmedName);
         setRole('staff');
         setAuthError(null);
         setIsGameStarted(true);
         return;
       }
-
-      setAuthError('Staff name or password does not match the current criteria.');
+      setAuthError(t('errorStaffMismatch'));
       return;
     }
 
@@ -565,13 +561,15 @@ const GamePage = () => {
     };
 
     if (!nextCriteria.nameContains || !nextCriteria.password) {
-      setAdminNotice('Staff criteria needs both a name string and password.');
+      setAdminNotice(t('errorStaffCriteriaRequired'));
       return;
     }
 
+    staffCriteriaRef.current = nextCriteria;
     setStaffCriteria(nextCriteria);
     sendAdminBroadcast('admin_update_staff_criteria', nextCriteria);
-    setAdminNotice('Staff criteria saved.');
+    queuePersistWorldState({ ...buildPersistedWorldState(), staffCriteria: nextCriteria });
+    setAdminNotice(t('noticeStaffCriteriaSaved'));
   };
 
   const handlePaintMapTile = useCallback((tileX: number, tileY: number, tileType: 0 | 1) => {
@@ -589,7 +587,7 @@ const GamePage = () => {
     setMapData(nextMap);
     sendAdminBroadcast('admin_replace_map_layout', nextMap);
     queuePersistWorldState({ ...buildPersistedWorldState(), mapData: nextMap });
-    setAdminNotice('Map layout reset.');
+    setAdminNotice(t('noticeMapReset'));
   };
 
   const getStream = async () => {
@@ -631,26 +629,31 @@ const GamePage = () => {
   };
 
   const uploadSharedMedia = useCallback(async (file: File, kind: 'object' | 'background') => {
-    if (file.size > MAX_INLINE_MEDIA_BYTES) {
-      throw new Error(`"${file.name}" is too large. Please use a file under 4 MB.`);
-    }
-
-    const dataUrl = await readFileAsDataUrl(file);
     const { data, error } = await supabase.functions.invoke('spatial-world', {
       body: {
-        action: 'upload_media',
+        action: 'create_upload_url',
         adminPassword: password,
         kind,
         fileName: file.name,
-        dataUrl,
+        contentType: file.type || 'application/octet-stream',
       },
     });
 
     if (error) throw error;
     if ((data as any)?.error) throw new Error((data as any).error);
-    if (typeof (data as any)?.url !== 'string') throw new Error('Upload did not return a shared URL.');
-    return (data as any).url as string;
-  }, [password]);
+    const upload = data as { path?: string; token?: string; url?: string };
+    if (!upload.path || !upload.token) throw new Error(t('errorUploadNoUrl'));
+
+    const { error: uploadError } = await supabase.storage
+      .from('spatial_media')
+      .uploadToSignedUrl(upload.path, upload.token, file, {
+        cacheControl: '3600',
+        contentType: file.type || 'application/octet-stream',
+      });
+    if (uploadError) throw new Error(uploadError.message || t('errorStorageUpload'));
+
+    return upload.url || URL.createObjectURL(file);
+  }, [password, t]);
 
   const handleObjectUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -659,7 +662,7 @@ const GamePage = () => {
     try {
       url = await uploadSharedMedia(file, 'object');
     } catch (error) {
-      setAdminNotice(error instanceof Error ? error.message : 'Storage upload failed.');
+      setAdminNotice(error instanceof Error ? error.message : t('errorStorageUpload'));
       e.target.value = '';
       return;
     }
@@ -694,7 +697,7 @@ const GamePage = () => {
       bgUrl = await uploadSharedMedia(file, 'background');
     } catch (error) {
       setBackgroundImage(previousBackground);
-      setAdminNotice(error instanceof Error ? error.message : 'Background upload failed.');
+      setAdminNotice(error instanceof Error ? error.message : t('errorBackgroundUpload'));
       e.target.value = '';
       URL.revokeObjectURL(previewUrl);
       return;
@@ -711,7 +714,17 @@ const GamePage = () => {
   const handleAddObject = (type: InteractiveObject['type'], src: string) => {
     const trimmedSrc = src.trim();
     if (!trimmedSrc) return;
-    const newObj: InteractiveObject = { id: uuidv4(), type, x, y: y-4, width: 6, height: 4, src: trimmedSrc };
+    const isNotice = type === 'notice';
+    const newObj: InteractiveObject = {
+      id: uuidv4(),
+      type,
+      x,
+      y: y - 4,
+      width: isNotice ? 5 : 6,
+      height: isNotice ? 3 : 4,
+      src: trimmedSrc,
+      title: isNotice ? t('noticeBoard') : undefined,
+    };
     const nextObjects = [...interactiveObjectsRef.current, newObj];
     interactiveObjectsRef.current = nextObjects;
     setInteractiveObjects(nextObjects);
@@ -767,7 +780,7 @@ const GamePage = () => {
           const y = existing ? existing.y : presence.y;
           const direction = existing ? existing.direction : presence.direction;
 
-          return { id: key, displayName: presence.displayName || 'Unknown', x, y, direction, avatarConfig: presence.avatarConfig, isCameraOn: presence.isCameraOn } as User;
+          return { id: key, displayName: presence.displayName || t('unknown'), x, y, direction, avatarConfig: presence.avatarConfig, isCameraOn: presence.isCameraOn } as User;
         }).filter((u): u is User => u !== null && u.id !== userId);
         return activeUsers;
       });
@@ -827,7 +840,7 @@ const GamePage = () => {
       
     activeChannelRef.current = newChannel;
     setChannel(newChannel);
-  }, [applyWorldStateSnapshot, buildWorldStateSnapshot, isGameStarted, userId]);
+  }, [applyWorldStateSnapshot, buildWorldStateSnapshot, isGameStarted, t, userId]);
 
   const trackRef = useRef(0);
   const trackTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -876,7 +889,7 @@ const GamePage = () => {
         <div className="flex flex-col md:flex-row gap-8 bg-white/5 backdrop-blur-xl p-8 rounded-3xl shadow-2xl border border-white/10 max-h-[90vh] z-10 w-full max-w-4xl relative overflow-hidden"> 
           <div className="w-full md:w-1/3 flex flex-col items-center justify-start bg-black/40 rounded-2xl p-6 border border-white/5"> 
             <h2 className="text-xl font-bold mb-6 text-white/80 tracking-widest uppercase text-sm">{t('preview')}</h2> 
-            <AvatarPreview config={avatar} /> 
+            <AvatarPreview config={avatar} label={t('previewMode')} />
           </div> 
           <div className="w-full md:w-2/3 flex flex-col min-h-0"> 
             <h1 className="text-3xl font-bold mb-2 bg-gradient-to-br from-white to-white/50 bg-clip-text text-transparent">{t('title')}</h1> 
@@ -887,7 +900,7 @@ const GamePage = () => {
                   <label className="block text-[10px] uppercase font-bold text-white/50 mb-3 tracking-widest"> {t(key)} </label> 
                   <div className="flex flex-wrap gap-2"> 
                     {AVATAR_OPTIONS[key].map((opt: string) => ( 
-                      <button key={opt} onClick={() => setAvatar(prev => ({...prev, [key]: opt}))} className={`w-9 h-9 rounded-xl border transition-all duration-200 ${(avatar as any)[key] === opt ? 'border-blue-400 scale-110 shadow-[0_0_15px_rgba(96,165,250,0.4)]' : 'border-white/10 hover:border-white/30 hover:scale-105'}`} style={{backgroundColor: opt.startsWith('#') ? opt : '#111827'}} title={opt}> {!opt.startsWith('#') && <span className="text-[10px] flex items-center justify-center h-full w-full text-white/40">{opt.slice(0,2).toUpperCase()}</span>} </button> 
+                      <button key={opt} onClick={() => setAvatar(prev => ({...prev, [key]: opt}))} className={`${opt.startsWith('#') ? 'w-9 px-0' : 'min-w-[72px] px-3'} h-9 rounded-xl border transition-all duration-200 ${(avatar as any)[key] === opt ? 'border-blue-400 scale-105 shadow-[0_0_15px_rgba(96,165,250,0.4)]' : 'border-white/10 hover:border-white/30 hover:scale-105'}`} style={{backgroundColor: opt.startsWith('#') ? opt : '#111827'}} title={avatarOptionLabel(opt)} aria-label={`${t(key as TranslationKey)}: ${avatarOptionLabel(opt)}`}> {!opt.startsWith('#') && <span className="text-[11px] flex items-center justify-center h-full w-full text-white/70 whitespace-nowrap">{avatarOptionLabel(opt)}</span>} </button>
                     ))} 
                   </div> 
                 </div> 
@@ -895,10 +908,10 @@ const GamePage = () => {
             </div> 
             <div className="mt-8 pt-6 border-t border-white/10"> 
               <input type="text" className="w-full p-4 rounded-xl bg-black/50 border border-white/10 focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 outline-none text-white placeholder-white/30 mb-3 transition-all text-sm" placeholder={t('placeholder')} value={username} onChange={e=>{ setUsername(e.target.value); setAuthError(null); }} onKeyDown={e => { if (e.key === 'Enter') handleJoinWorld(); }} /> 
-              <input type="password" className="w-full p-4 rounded-xl bg-black/50 border border-white/10 focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 outline-none text-white placeholder-white/30 mb-3 transition-all text-sm" placeholder="Password for admin/staff" value={password} onChange={e=>{ setPassword(e.target.value); setAuthError(null); }} onKeyDown={e => { if (e.key === 'Enter') handleJoinWorld(); }} /> 
+              {needsPassword && <input type="password" className="w-full p-4 rounded-xl bg-black/50 border border-white/10 focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 outline-none text-white placeholder-white/30 mb-3 transition-all text-sm" placeholder={t('passwordPlaceholder')} value={password} onChange={e=>{ setPassword(e.target.value); setAuthError(null); }} onKeyDown={e => { if (e.key === 'Enter') handleJoinWorld(); }} />}
               {worldStateError && <div className="mb-3 rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">{worldStateError}</div>}
               {authError && <div className="mb-3 rounded-xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">{authError}</div>}
-              <button disabled={!username.trim() || isWorldStateLoading} onClick={handleJoinWorld} className="w-full bg-blue-600 py-4 rounded-xl font-bold text-white shadow-[0_0_20px_rgba(37,99,235,0.3)] hover:bg-blue-500 hover:shadow-[0_0_25px_rgba(37,99,235,0.5)] active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm uppercase tracking-wider"> {isWorldStateLoading ? 'Loading World...' : t('join')} </button>
+              <button disabled={!username.trim() || isWorldStateLoading} onClick={handleJoinWorld} className="w-full bg-blue-600 py-4 rounded-xl font-bold text-white shadow-[0_0_20px_rgba(37,99,235,0.3)] hover:bg-blue-500 hover:shadow-[0_0_25px_rgba(37,99,235,0.5)] active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm uppercase tracking-wider"> {isWorldStateLoading ? t('loadingWorld') : t('join')} </button>
             </div> 
           </div> 
         </div> 
@@ -926,6 +939,7 @@ const GamePage = () => {
         layoutEditMode={layoutEditMode}
         tilePaintMode={tilePaintMode}
         onPaintTile={handlePaintMapTile}
+        labels={{ document: t('document'), notice: t('noticeBoard'), open: t('open') }}
       />
       
       <div className="absolute top-6 left-6 text-white bg-[#0f172a]/90 p-5 rounded-2xl backdrop-blur-xl shadow-2xl border border-white/20 select-none pointer-events-none min-w-[200px]"> 
@@ -948,7 +962,7 @@ const GamePage = () => {
       {isAdmin && showAdminPanel && (
         <div className="absolute top-20 right-6 z-[90] w-[360px] max-w-[calc(100vw-48px)] rounded-2xl border border-white/15 bg-[#0f172a]/95 p-5 text-white shadow-2xl backdrop-blur-xl">
           <div className="mb-5 flex items-center justify-between">
-            <h2 className="text-sm font-bold uppercase tracking-widest text-white/80">Admin Panel</h2>
+            <h2 className="text-sm font-bold uppercase tracking-widest text-white/80">{t('adminPanel')}</h2>
             <button onClick={() => setShowAdminPanel(false)} className="rounded-full bg-white/5 p-2 text-white/50 hover:bg-white/10 hover:text-white">
               <Icons.Close />
             </button>
@@ -957,50 +971,51 @@ const GamePage = () => {
           <div className="space-y-5">
             <div className="border-b border-white/10 pb-5">
               <div className="mb-3 flex items-center justify-between gap-3">
-                <span className="text-xs font-bold uppercase tracking-widest text-white/50">Map Layout</span>
+                <span className="text-xs font-bold uppercase tracking-widest text-white/50">{t('mapLayout')}</span>
                 <button
                   onClick={() => setLayoutEditMode(prev => !prev)}
                   className={`rounded-lg px-3 py-2 text-xs font-bold uppercase tracking-wide ${layoutEditMode ? 'bg-blue-500 text-white' : 'bg-white/5 text-white/70 hover:bg-white/10'}`}
                 >
-                  {layoutEditMode ? 'Editing' : 'Edit'}
+                  {layoutEditMode ? t('editing') : t('edit')}
                 </button>
               </div>
               <div className="grid grid-cols-2 gap-2">
-                <button onClick={() => setTilePaintMode('wall')} className={`rounded-lg px-3 py-2 text-sm font-semibold ${tilePaintMode === 'wall' ? 'bg-black text-white ring-1 ring-blue-400' : 'bg-white/5 text-white/70 hover:bg-white/10'}`}>Black</button>
-                <button onClick={() => setTilePaintMode('floor')} className={`rounded-lg px-3 py-2 text-sm font-semibold ${tilePaintMode === 'floor' ? 'bg-slate-100 text-slate-900 ring-1 ring-blue-400' : 'bg-white/5 text-white/70 hover:bg-white/10'}`}>Walk</button>
+                <button onClick={() => setTilePaintMode('wall')} className={`rounded-lg px-3 py-2 text-sm font-semibold ${tilePaintMode === 'wall' ? 'bg-black text-white ring-1 ring-blue-400' : 'bg-white/5 text-white/70 hover:bg-white/10'}`}>{t('black')}</button>
+                <button onClick={() => setTilePaintMode('floor')} className={`rounded-lg px-3 py-2 text-sm font-semibold ${tilePaintMode === 'floor' ? 'bg-slate-100 text-slate-900 ring-1 ring-blue-400' : 'bg-white/5 text-white/70 hover:bg-white/10'}`}>{t('walk')}</button>
               </div>
-              <button onClick={handleResetMapLayout} className="mt-2 w-full rounded-lg bg-white/5 px-3 py-2 text-sm font-semibold text-white/70 hover:bg-white/10">Reset Walls</button>
+              <button onClick={handleResetMapLayout} className="mt-2 w-full rounded-lg bg-white/5 px-3 py-2 text-sm font-semibold text-white/70 hover:bg-white/10">{t('resetWalls')}</button>
             </div>
 
             <div className="border-b border-white/10 pb-5">
-              <div className="mb-3 text-xs font-bold uppercase tracking-widest text-white/50">Staff Access</div>
+              <div className="mb-3 text-xs font-bold uppercase tracking-widest text-white/50">{t('staffAccess')}</div>
               <input
                 className="mb-2 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none focus:border-blue-400"
-                placeholder="Name contains"
+                placeholder={t('nameContains')}
                 value={staffCriteriaForm.nameContains}
                 onChange={e => setStaffCriteriaForm(prev => ({ ...prev, nameContains: e.target.value }))}
               />
               <input
                 className="mb-3 w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none focus:border-blue-400"
-                placeholder="Staff password"
+                placeholder={t('staffPassword')}
                 type="password"
                 value={staffCriteriaForm.password}
                 onChange={e => setStaffCriteriaForm(prev => ({ ...prev, password: e.target.value }))}
               />
-              <button onClick={handleSaveStaffCriteria} className="w-full rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold hover:bg-blue-500">Save Criteria</button>
+              <button onClick={handleSaveStaffCriteria} className="w-full rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold hover:bg-blue-500">{t('saveCriteria')}</button>
             </div>
 
             <div>
-              <div className="mb-3 text-xs font-bold uppercase tracking-widest text-white/50">Media</div>
+              <div className="mb-3 text-xs font-bold uppercase tracking-widest text-white/50">{t('media')}</div>
               <div className="grid grid-cols-2 gap-2">
-                <button onClick={() => fileInputRef.current?.click()} className="rounded-lg bg-white/5 px-3 py-2 text-sm font-semibold text-white/80 hover:bg-white/10">Background</button>
-                <button onClick={handleClearBackground} className="rounded-lg bg-white/5 px-3 py-2 text-sm font-semibold text-rose-200 hover:bg-rose-500/10">Clear Bg</button>
-                <button onClick={() => objectFileInputRef.current?.click()} className="rounded-lg bg-white/5 px-3 py-2 text-sm font-semibold text-white/80 hover:bg-white/10">Upload</button>
-                <button onClick={() => { setActiveModal('video'); setShowAdminPanel(false); }} className="rounded-lg bg-white/5 px-3 py-2 text-sm font-semibold text-white/80 hover:bg-white/10">Video URL</button>
-                <button onClick={() => { setActiveModal('iframe'); setShowAdminPanel(false); }} className="rounded-lg bg-white/5 px-3 py-2 text-sm font-semibold text-white/80 hover:bg-white/10">iFrame</button>
-                <button onClick={() => { setActiveModal('document'); setShowAdminPanel(false); }} className="rounded-lg bg-white/5 px-3 py-2 text-sm font-semibold text-white/80 hover:bg-white/10">Doc URL</button>
+                <button onClick={() => fileInputRef.current?.click()} className="rounded-lg bg-white/5 px-3 py-2 text-sm font-semibold text-white/80 hover:bg-white/10">{t('background')}</button>
+                <button onClick={handleClearBackground} className="rounded-lg bg-white/5 px-3 py-2 text-sm font-semibold text-rose-200 hover:bg-rose-500/10">{t('clearBg')}</button>
+                <button onClick={() => objectFileInputRef.current?.click()} className="rounded-lg bg-white/5 px-3 py-2 text-sm font-semibold text-white/80 hover:bg-white/10">{t('upload')}</button>
+                <button onClick={() => { setActiveModal('video'); setShowAdminPanel(false); }} className="rounded-lg bg-white/5 px-3 py-2 text-sm font-semibold text-white/80 hover:bg-white/10">{t('videoUrl')}</button>
+                <button onClick={() => { setActiveModal('iframe'); setShowAdminPanel(false); }} className="rounded-lg bg-white/5 px-3 py-2 text-sm font-semibold text-white/80 hover:bg-white/10">{t('iframe')}</button>
+                <button onClick={() => { setActiveModal('document'); setShowAdminPanel(false); }} className="rounded-lg bg-white/5 px-3 py-2 text-sm font-semibold text-white/80 hover:bg-white/10">{t('docUrl')}</button>
+                <button onClick={() => { setActiveModal('notice'); setShowAdminPanel(false); }} className="col-span-2 rounded-lg bg-white/5 px-3 py-2 text-sm font-semibold text-white/80 hover:bg-white/10">{t('noticeBoard')}</button>
               </div>
-              <button onClick={handleDeleteAllObjects} className="mt-2 w-full rounded-lg bg-rose-500/10 px-3 py-2 text-sm font-bold text-rose-200 hover:bg-rose-500/20">Delete All Media</button>
+              <button onClick={handleDeleteAllObjects} className="mt-2 w-full rounded-lg bg-rose-500/10 px-3 py-2 text-sm font-bold text-rose-200 hover:bg-rose-500/20">{t('deleteAllMedia')}</button>
             </div>
 
             {adminNotice && <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/70">{adminNotice}</div>}
@@ -1044,16 +1059,17 @@ const GamePage = () => {
               </button>
               {showAddMenu && (
                 <div className="absolute bottom-[calc(100%+24px)] left-1/2 transform -translate-x-1/2 w-64 bg-[#111827]/90 backdrop-blur-2xl rounded-2xl shadow-[0_20px_40px_rgba(0,0,0,0.6)] border border-white/10 overflow-hidden py-2 text-white/90 animate-fade-in-up origin-bottom z-[70]">
-                  <button onClick={() => fileInputRef.current?.click()} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.Upload /></div> <span>Upload Map Background</span> </button>
-                  <button onClick={handleClearBackground} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-rose-500/10 flex items-center gap-4 transition-colors text-rose-400"> <div className="text-rose-400/50"><Icons.Trash /></div> <span>Clear Map</span> </button>
+                  <button onClick={() => fileInputRef.current?.click()} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.Upload /></div> <span>{t('uploadMapBackground')}</span> </button>
+                  <button onClick={handleClearBackground} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-rose-500/10 flex items-center gap-4 transition-colors text-rose-400"> <div className="text-rose-400/50"><Icons.Trash /></div> <span>{t('clearMap')}</span> </button>
                   <div className="h-px bg-white/5 my-1"></div>
-                  <button onClick={() => objectFileInputRef.current?.click()} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.File /></div> <span>Upload Media File</span> </button>
-                  <button onClick={() => { setActiveModal('video'); setShowAddMenu(false); }} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.Youtube /></div> <span>Embed Video URL</span> </button>
-                  <button onClick={() => { setActiveModal('iframe'); setShowAddMenu(false); }} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.Code /></div> <span>Embed iFrame</span> </button>
-                  <button onClick={() => { setActiveModal('image'); setShowAddMenu(false); }} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.Monitor /></div> <span>Embed Image URL</span> </button>
-                  <button onClick={() => { setActiveModal('document'); setShowAddMenu(false); }} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.File /></div> <span>Embed Document URL</span> </button>
+                  <button onClick={() => objectFileInputRef.current?.click()} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.File /></div> <span>{t('uploadMediaFile')}</span> </button>
+                  <button onClick={() => { setActiveModal('video'); setShowAddMenu(false); }} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.Youtube /></div> <span>{t('embedVideoUrl')}</span> </button>
+                  <button onClick={() => { setActiveModal('iframe'); setShowAddMenu(false); }} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.Code /></div> <span>{t('embedIframe')}</span> </button>
+                  <button onClick={() => { setActiveModal('image'); setShowAddMenu(false); }} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.Monitor /></div> <span>{t('embedImageUrl')}</span> </button>
+                  <button onClick={() => { setActiveModal('document'); setShowAddMenu(false); }} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.File /></div> <span>{t('embedDocumentUrl')}</span> </button>
+                  <button onClick={() => { setActiveModal('notice'); setShowAddMenu(false); }} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-white/5 flex items-center gap-4 transition-colors"> <div className="text-white/40"><Icons.Notice /></div> <span>{t('noticeBoard')}</span> </button>
                   <div className="h-px bg-white/5 my-1"></div>
-                  <button onClick={handleDeleteAllObjects} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-rose-500/10 text-rose-400 flex items-center gap-4 transition-colors"> <div className="text-rose-400/50"><Icons.Trash /></div> <span>Delete All Media</span> </button>
+                  <button onClick={handleDeleteAllObjects} className="w-full px-5 py-3.5 text-sm font-medium text-left hover:bg-rose-500/10 text-rose-400 flex items-center gap-4 transition-colors"> <div className="text-rose-400/50"><Icons.Trash /></div> <span>{t('deleteAllMedia')}</span> </button>
                 </div>
               )}
             </div>
@@ -1062,24 +1078,30 @@ const GamePage = () => {
       </div>
       
       <input type="file" ref={fileInputRef} hidden accept="image/*" onChange={handleBackgroundUpload} />
-      <input type="file" ref={objectFileInputRef} hidden accept="image/*,video/*,application/pdf,.pdf,.ppt,.pptx,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation" onChange={handleObjectUpload} />
+      <input type="file" ref={objectFileInputRef} hidden accept="image/*,video/*,video/mp4,.mp4,application/pdf,.pdf,.ppt,.pptx,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation" onChange={handleObjectUpload} />
       
       {/* Modal Dialog for Admin */}
       {activeModal && ( 
         <div className="absolute inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[100]"> 
           <div className="bg-[#111827] border border-white/10 text-white p-6 rounded-3xl w-[420px] shadow-[0_20px_60px_rgba(0,0,0,0.8)] animate-scale-in"> 
             <div className="flex justify-between items-center mb-6"> 
-              <h3 className="text-xl font-bold tracking-wide">Add {activeModal === 'iframe' ? 'Embed' : activeModal === 'video' ? 'Video' : activeModal === 'document' ? 'Document' : 'Image'}</h3> 
+              <h3 className="text-xl font-bold tracking-wide">
+                {activeModal === 'iframe' ? t('addEmbed') : activeModal === 'video' ? t('addVideo') : activeModal === 'document' ? t('addDocument') : activeModal === 'notice' ? t('addNotice') : t('addImage')}
+              </h3>
               <button onClick={() => setActiveModal(null)} className="text-white/30 hover:text-white p-2 bg-white/5 rounded-full transition-colors"><Icons.Close /></button> 
             </div> 
             <div className="space-y-4"> 
               <div> 
-                <label className="block text-xs font-bold text-white/40 uppercase mb-2 tracking-wider">Object URL</label> 
-                <input autoFocus type="text" placeholder="https://..." className="w-full bg-black/40 border border-white/10 focus:border-blue-500/50 outline-none rounded-xl p-4 text-sm transition-all" value={modalInput} onChange={e => setModalInput(e.target.value)} /> 
+                <label className="block text-xs font-bold text-white/40 uppercase mb-2 tracking-wider">{activeModal === 'notice' ? t('noticeText') : t('objectUrl')}</label>
+                {activeModal === 'notice' ? (
+                  <textarea autoFocus rows={5} placeholder={t('noticePlaceholder')} className="w-full resize-none bg-black/40 border border-white/10 focus:border-blue-500/50 outline-none rounded-xl p-4 text-sm transition-all" value={modalInput} onChange={e => setModalInput(e.target.value)} />
+                ) : (
+                  <input autoFocus type="text" placeholder={t('urlPlaceholder')} className="w-full bg-black/40 border border-white/10 focus:border-blue-500/50 outline-none rounded-xl p-4 text-sm transition-all" value={modalInput} onChange={e => setModalInput(e.target.value)} />
+                )}
               </div> 
               <div className="flex justify-end gap-3 pt-6"> 
-                <button onClick={() => setActiveModal(null)} className="px-6 py-3 rounded-xl text-white/60 font-medium hover:bg-white/5 transition-colors text-sm">Cancel</button> 
-                <button onClick={() => handleAddObject(activeModal!, modalInput)} className="px-8 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold shadow-[0_0_20px_rgba(37,99,235,0.3)] transition-all active:scale-[0.98] text-sm tracking-wide">Deploy Object</button> 
+                <button onClick={() => setActiveModal(null)} className="px-6 py-3 rounded-xl text-white/60 font-medium hover:bg-white/5 transition-colors text-sm">{t('cancel')}</button>
+                <button onClick={() => handleAddObject(activeModal!, modalInput)} className="px-8 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold shadow-[0_0_20px_rgba(37,99,235,0.3)] transition-all active:scale-[0.98] text-sm tracking-wide">{t('deployObject')}</button>
               </div> 
             </div> 
           </div> 
