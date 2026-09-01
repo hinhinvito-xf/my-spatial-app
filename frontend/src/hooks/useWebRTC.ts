@@ -101,17 +101,14 @@ export const useWebRTC = (
     };
 
     peer.onnegotiationneeded = async () => {
-      console.log('[NEGOTIATE] onnegotiationneeded fired for', targetId.slice(0,8), 'peer.signalingState:', peer.signalingState);
       try {
         makingOfferRef.current[targetId] = true;
         await peer.setLocalDescription();
-        console.log('[NEGOTIATE] localDescription set, type:', peer.localDescription?.type);
         if (peer.localDescription) {
-          const result = await channel.send({
+          await channel.send({
             type: 'broadcast', event: 'signal',
             payload: { targetId, senderId: currentUserId, signal: { type: peer.localDescription.type, sdp: peer.localDescription.sdp } }
           });
-          console.log('[NEGOTIATE] signal sent, result:', result);
         }
       } catch (err) {
         console.error("[NEGOTIATE] error:", err);
@@ -126,15 +123,12 @@ export const useWebRTC = (
       // which doesn't fire reliably in all browsers for DataChannel-only peers
       (async () => {
         try {
-          console.log('[WEBRTC] Creating explicit offer for', targetId.slice(0,8));
           const offer = await peer.createOffer();
           await peer.setLocalDescription(offer);
-          console.log('[WEBRTC] Offer created, sending via broadcast');
           await channel.send({
             type: 'broadcast', event: 'signal',
             payload: { targetId, senderId: currentUserId, signal: { type: 'offer', sdp: peer.localDescription!.sdp } }
           });
-          console.log('[WEBRTC] Offer sent successfully');
         } catch (err) {
           console.error('[WEBRTC] Explicit offer error:', err);
         }
@@ -154,16 +148,12 @@ export const useWebRTC = (
       const users = otherUsersRef.current;
       const activeIds = new Set<string>();
 
-      console.log('[PROXIMITY]', { myId: currentUserId, myPos: pos, usersCount: users.length, existingPeers: Object.keys(peersRef.current).length });
-
       users.forEach(u => {
         const dist = (u.x !== undefined && u.y !== undefined)
           ? getDistance(pos, { x: u.x, y: u.y }) : 0;
-        console.log('[PROXIMITY] User:', u.id.slice(0,8), 'dist:', dist.toFixed(1), 'hasPeer:', !!peersRef.current[u.id], 'isSelf:', u.id === currentUserId);
         if (dist <= 12) {
           activeIds.add(u.id);
           if (!peersRef.current[u.id] && u.id !== currentUserId) {
-            console.log('[PROXIMITY] Creating peer to', u.id.slice(0,8));
             createPeer(u.id, currentUserId < u.id);
           }
         }
