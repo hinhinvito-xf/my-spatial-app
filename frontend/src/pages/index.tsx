@@ -1,6 +1,6 @@
 import React, { useMemo, useEffect, useState, useRef, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { MessageSquareText } from 'lucide-react';
+import { ChevronDown, ChevronUp, HelpCircle, MessageSquareText } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { getTranslation, Language, TranslationKey } from '../lib/i18n';
 import MapCanvas, { MapData, User, AvatarConfig, drawHumanSprite, Direction, InteractiveObject } from '../components/canvas/MapCanvas';
@@ -70,6 +70,102 @@ const AvatarPreview: React.FC<{config:AvatarConfig; label: string}> = ({config, 
     <div className="flex flex-col items-center">
       <canvas ref={canvasRef} width={190} height={190} className="rounded-2xl bg-white/5 border border-white/10 shadow-inner backdrop-blur-sm" />
       <p className="text-xs text-white/50 mt-3 tracking-widest uppercase">{label}</p>
+    </div>
+  );
+};
+
+const LANGUAGE_OPTIONS: Array<{ value: Language; label: string }> = [
+  { value: 'en', label: 'English' },
+  { value: 'ja', label: '日本語' },
+  { value: 'zh', label: '中文' },
+];
+
+const LanguagePicker: React.FC<{ language: Language; onChange: (language: Language) => void; label: string }> = ({ language, onChange, label }) => (
+  <label className="flex items-center gap-2 rounded-full border border-white/10 bg-[#0f172a]/90 px-4 py-2 text-sm font-semibold text-white shadow-lg backdrop-blur">
+    <span className="sr-only">{label}</span>
+    <select value={language} onChange={e => onChange(e.target.value as Language)} className="cursor-pointer bg-transparent text-white outline-none">
+      {LANGUAGE_OPTIONS.map(option => (
+        <option key={option.value} value={option.value} className="text-black">{option.label}</option>
+      ))}
+    </select>
+  </label>
+);
+
+type TutorialStep = { title: TranslationKey; body: TranslationKey };
+
+const LOGIN_TUTORIAL_STEPS: TutorialStep[] = [
+  { title: 'loginGuideLanguageTitle', body: 'loginGuideLanguageBody' },
+  { title: 'loginGuideAvatarTitle', body: 'loginGuideAvatarBody' },
+  { title: 'loginGuideNameTitle', body: 'loginGuideNameBody' },
+  { title: 'loginGuideJoinTitle', body: 'loginGuideJoinBody' },
+];
+
+const WORLD_TUTORIAL_STEPS: TutorialStep[] = [
+  { title: 'worldGuideMapTitle', body: 'worldGuideMapBody' },
+  { title: 'worldGuideMoveTitle', body: 'worldGuideMoveBody' },
+  { title: 'worldGuideToolbarTitle', body: 'worldGuideToolbarBody' },
+  { title: 'worldGuideMediaTitle', body: 'worldGuideMediaBody' },
+];
+
+const WORLD_ADMIN_TUTORIAL_STEPS: TutorialStep[] = [
+  ...WORLD_TUTORIAL_STEPS,
+  { title: 'worldGuideAdminTitle', body: 'worldGuideAdminBody' },
+];
+
+const MiniMap: React.FC<{ mapData: MapData; x: number; y: number; backgroundImage: string | null; label: string }> = ({ mapData, x, y, backgroundImage, label }) => {
+  const dotLeft = Math.min(100, Math.max(0, ((x + 0.5) / mapData.width) * 100));
+  const dotTop = Math.min(100, Math.max(0, ((y + 0.5) / mapData.height) * 100));
+
+  return (
+    <div>
+      <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-white/40">{label}</div>
+      <div className="relative h-24 w-full overflow-hidden rounded-xl border border-white/10 bg-slate-800">
+        {backgroundImage ? (
+          <img src={backgroundImage} alt="" draggable={false} className="absolute inset-0 h-full w-full object-fill opacity-90" />
+        ) : (
+          <div className="absolute inset-0 opacity-80" style={{ backgroundImage: 'linear-gradient(45deg, rgba(255,255,255,.08) 25%, transparent 25%), linear-gradient(-45deg, rgba(255,255,255,.08) 25%, transparent 25%), linear-gradient(45deg, transparent 75%, rgba(255,255,255,.08) 75%), linear-gradient(-45deg, transparent 75%, rgba(255,255,255,.08) 75%)', backgroundSize: '16px 16px', backgroundPosition: '0 0, 0 8px, 8px -8px, -8px 0' }} />
+        )}
+        <div
+          className="absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-blue-400 shadow-[0_0_14px_rgba(96,165,250,0.9)]"
+          style={{ left: `${dotLeft}%`, top: `${dotTop}%` }}
+        />
+      </div>
+    </div>
+  );
+};
+
+const TutorialOverlay: React.FC<{
+  step: TutorialStep;
+  stepIndex: number;
+  stepCount: number;
+  t: (key: TranslationKey) => string;
+  onNext: () => void;
+  onSkip: () => void;
+}> = ({ step, stepIndex, stepCount, t, onNext, onSkip }) => {
+  const isLast = stepIndex >= stepCount - 1;
+
+  return (
+    <div className="fixed inset-0 z-[120] pointer-events-none">
+      <div className="absolute inset-0 bg-black/35" />
+      <div className="absolute bottom-6 left-1/2 w-[min(420px,calc(100vw-32px))] -translate-x-1/2 rounded-2xl border border-white/15 bg-[#111827]/95 p-5 text-white shadow-2xl backdrop-blur-xl pointer-events-auto">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-blue-200">
+            <HelpCircle className="h-4 w-4" />
+            <span>{t('tutorial')}</span>
+          </div>
+          <span className="rounded-full bg-white/10 px-3 py-1 text-[11px] font-bold text-white/70">
+            {t('tutorialStep')} {stepIndex + 1}/{stepCount}
+          </span>
+        </div>
+        <h2 className="mb-2 text-lg font-bold leading-tight">{t(step.title)}</h2>
+        <p className="text-sm leading-6 text-white/70">{t(step.body)}</p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button onClick={onSkip} className="rounded-lg px-4 py-2 text-sm font-semibold text-white/60 hover:bg-white/5 hover:text-white">{t('tutorialSkip')}</button>
+          <button onClick={onNext} className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-bold text-white hover:bg-blue-500">
+            {isLast ? t('tutorialDone') : t('tutorialNext')}
+          </button>
+        </div>
+      </div>
     </div>
   );
 };
@@ -290,6 +386,10 @@ const GamePage = () => {
   const [floatingEmojis, setFloatingEmojis] = useState<{ id: string, text: string, x: number, y: number, timestamp: number }[]>([]);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const EMOJI_LIST = ['👍', '👋', '😂', '❤️', '🔥', '🎉'];
+  const [isInfoCollapsed, setIsInfoCollapsed] = useState(false);
+  const [showTutorial, setShowTutorial] = useState(true);
+  const [tutorialStepIndex, setTutorialStepIndex] = useState(0);
+  const [tutorialSeen, setTutorialSeen] = useState({ login: false, world: false });
 
   const sendEmoji = (emoji: string) => {
     const newEmoji = { id: uuidv4(), text: emoji, x, y, timestamp: Date.now() };
@@ -371,10 +471,36 @@ const GamePage = () => {
   const needsPassword = trimmedUsername.toLowerCase() === ADMIN_NAME ||
     (staffNameNeedle.length > 0 && trimmedUsername.toLowerCase().includes(staffNameNeedle));
   const avatarOptionLabel = (opt: string) => AVATAR_TEXT_OPTIONS.has(opt) ? t(opt as TranslationKey) : opt;
+  const tutorialStage = isGameStarted ? 'world' : 'login';
+  const tutorialSteps = isGameStarted ? (isAdmin ? WORLD_ADMIN_TUTORIAL_STEPS : WORLD_TUTORIAL_STEPS) : LOGIN_TUTORIAL_STEPS;
+  const currentTutorialStep = tutorialSteps[Math.min(tutorialStepIndex, tutorialSteps.length - 1)];
+
+  const openTutorial = () => {
+    setTutorialStepIndex(0);
+    setShowTutorial(true);
+  };
+
+  const closeTutorial = () => {
+    setTutorialSeen(prev => ({ ...prev, [tutorialStage]: true }));
+    setShowTutorial(false);
+  };
+
+  const advanceTutorial = () => {
+    if (tutorialStepIndex >= tutorialSteps.length - 1) {
+      closeTutorial();
+      return;
+    }
+    setTutorialStepIndex(prev => prev + 1);
+  };
 
   useEffect(() => {
     roleRef.current = role;
   }, [role]);
+
+  useEffect(() => {
+    setTutorialStepIndex(0);
+    setShowTutorial(!tutorialSeen[tutorialStage]);
+  }, [tutorialStage, tutorialSeen]);
 
   useEffect(() => {
     if (!needsPassword && password) setPassword("");
@@ -879,12 +1005,12 @@ const GamePage = () => {
   if (!isGameStarted) {
     return ( 
       <div className="flex min-h-screen bg-[#070b14] text-white font-sans items-center justify-center p-4 selection:bg-blue-500/30"> 
-        <div className="absolute top-4 right-4 z-50 flex gap-2 bg-[#0f172a]/90 backdrop-blur border border-white/10 rounded-full px-4 py-2">
-          <select value={language} onChange={e => setLanguage(e.target.value as Language)} className="bg-transparent text-white outline-none cursor-pointer text-sm font-semibold">
-            <option value="en" className="text-black">English</option>
-            <option value="ja" className="text-black">日本語</option>
-            <option value="zh" className="text-black">中文</option>
-          </select>
+        <div className="absolute top-4 right-4 z-50 flex flex-wrap justify-end gap-2">
+          <LanguagePicker language={language} onChange={setLanguage} label={t('language')} />
+          <button onClick={openTutorial} className="flex items-center gap-2 rounded-full border border-white/10 bg-[#0f172a]/90 px-4 py-2 text-sm font-semibold text-white shadow-lg backdrop-blur hover:bg-white/10">
+            <HelpCircle className="h-4 w-4" />
+            <span>{t('guide')}</span>
+          </button>
         </div>
         <div className="flex flex-col md:flex-row gap-8 bg-white/5 backdrop-blur-xl p-8 rounded-3xl shadow-2xl border border-white/10 max-h-[90vh] z-10 w-full max-w-4xl relative overflow-hidden"> 
           <div className="w-full md:w-1/3 flex flex-col items-center justify-start bg-black/40 rounded-2xl p-6 border border-white/5"> 
@@ -915,6 +1041,16 @@ const GamePage = () => {
             </div> 
           </div> 
         </div> 
+        {showTutorial && currentTutorialStep && (
+          <TutorialOverlay
+            step={currentTutorialStep}
+            stepIndex={tutorialStepIndex}
+            stepCount={tutorialSteps.length}
+            t={t}
+            onNext={advanceTutorial}
+            onSkip={closeTutorial}
+          />
+        )}
       </div> 
     );
   }
@@ -942,22 +1078,42 @@ const GamePage = () => {
         labels={{ document: t('document'), notice: t('noticeBoard'), open: t('open') }}
       />
       
-      <div className="absolute top-6 left-6 text-white bg-[#0f172a]/90 p-5 rounded-2xl backdrop-blur-xl shadow-2xl border border-white/20 select-none pointer-events-none min-w-[200px]"> 
-        <div className="flex items-center gap-3 mb-4 pb-4 border-b border-white/10"> 
-          <div className={`w-2.5 h-2.5 rounded-full shadow-[0_0_10px_currentColor] transition-colors duration-500 ${isConnected ? 'bg-emerald-400 text-emerald-400' : 'bg-rose-400 text-rose-400'}`}></div> 
-          <span className="font-bold tracking-widest text-xs uppercase text-white/80">{isConnected ? t('online') : t('offline')}</span> 
-        </div> 
-        <div className="space-y-3 font-mono text-xs"> 
-          <div className="flex justify-between items-center text-white/50"><span className="uppercase tracking-wider">{t('coords')}</span><span className="text-white/90 bg-white/5 px-2 py-1 rounded">X:{x} Y:{y}</span></div> 
-          <div className="flex justify-between items-center text-white/50"><span className="uppercase tracking-wider">{t('nearby')}</span><span className="text-emerald-400 bg-emerald-400/10 px-2 py-1 rounded font-bold">{otherUsers.length}</span></div> 
-        </div> 
+      <div className={`absolute top-6 left-6 z-50 text-white bg-[#0f172a]/90 p-4 rounded-2xl backdrop-blur-xl shadow-2xl border border-white/20 select-none pointer-events-auto ${isInfoCollapsed ? 'w-[190px]' : 'w-[260px] max-w-[calc(100vw-48px)]'}`}>
+        <div className={`flex items-center gap-3 ${isInfoCollapsed ? '' : 'mb-4 pb-4 border-b border-white/10'}`}>
+          <div className={`w-2.5 h-2.5 rounded-full shadow-[0_0_10px_currentColor] transition-colors duration-500 ${isConnected ? 'bg-emerald-400 text-emerald-400' : 'bg-rose-400 text-rose-400'}`}></div>
+          <span className="flex-1 font-bold tracking-widest text-xs uppercase text-white/80">{isConnected ? t('online') : t('offline')}</span>
+          <button
+            onClick={() => setIsInfoCollapsed(prev => !prev)}
+            aria-label={isInfoCollapsed ? t('expandInfo') : t('collapseInfo')}
+            title={isInfoCollapsed ? t('expandInfo') : t('collapseInfo')}
+            className="rounded-lg bg-white/5 p-1.5 text-white/60 hover:bg-white/10 hover:text-white"
+          >
+            {isInfoCollapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+          </button>
+        </div>
+        {!isInfoCollapsed && (
+          <div className="space-y-4">
+            <MiniMap mapData={mapData} x={x} y={y} backgroundImage={backgroundImage} label={t('minimap')} />
+            <div className="space-y-3 font-mono text-xs">
+              <div className="flex justify-between items-center text-white/50"><span className="uppercase tracking-wider">{t('coords')}</span><span className="text-white/90 bg-white/5 px-2 py-1 rounded">X:{x} Y:{y}</span></div>
+              <div className="flex justify-between items-center text-white/50"><span className="uppercase tracking-wider">{t('nearby')}</span><span className="text-emerald-400 bg-emerald-400/10 px-2 py-1 rounded font-bold">{otherUsers.length}</span></div>
+            </div>
+          </div>
+        )}
       </div>
       
-      {isAdmin && (
-        <button onClick={() => setShowAdminPanel(true)} className="absolute top-6 right-6 bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 px-4 rounded-xl shadow-lg border border-purple-400 transition-all z-50 text-sm flex gap-2 items-center">
-          {t('adminTools')}
+      <div className="absolute top-6 right-6 z-50 flex flex-wrap justify-end gap-2">
+        <LanguagePicker language={language} onChange={setLanguage} label={t('language')} />
+        <button onClick={openTutorial} className="flex items-center gap-2 rounded-xl border border-white/10 bg-[#0f172a]/90 px-4 py-2 text-sm font-bold text-white shadow-lg backdrop-blur transition-all hover:bg-white/10">
+          <HelpCircle className="h-4 w-4" />
+          <span>{t('guide')}</span>
         </button>
-      )}
+        {isAdmin && (
+          <button onClick={() => setShowAdminPanel(true)} className="bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 px-4 rounded-xl shadow-lg border border-purple-400 transition-all text-sm flex gap-2 items-center">
+            {t('adminTools')}
+          </button>
+        )}
+      </div>
 
       {isAdmin && showAdminPanel && (
         <div className="absolute top-20 right-6 z-[90] w-[360px] max-w-[calc(100vw-48px)] rounded-2xl border border-white/15 bg-[#0f172a]/95 p-5 text-white shadow-2xl backdrop-blur-xl">
@@ -1106,6 +1262,17 @@ const GamePage = () => {
             </div> 
           </div> 
         </div> 
+      )}
+
+      {showTutorial && currentTutorialStep && (
+        <TutorialOverlay
+          step={currentTutorialStep}
+          stepIndex={tutorialStepIndex}
+          stepCount={tutorialSteps.length}
+          t={t}
+          onNext={advanceTutorial}
+          onSkip={closeTutorial}
+        />
       )}
       
       {/* Zoom Control Slider */}
